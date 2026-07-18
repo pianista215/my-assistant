@@ -61,19 +61,51 @@ func NewHelloWorld(now time.Time) *GrayImage {
 	canvas := image.NewGray(image.Rect(0, 0, Width, Height))
 	draw.Draw(canvas, canvas.Bounds(), image.White, image.Point{}, draw.Src)
 
-	d := &font.Drawer{
-		Dst:  canvas,
-		Src:  image.Black,
-		Face: basicfont.Face7x13,
-	}
-
-	d.Dot = fixed.P(40, 220)
-	d.DrawString("Hello World")
-
-	d.Dot = fixed.P(40, 250)
-	d.DrawString(now.Format("2006-01-02 15:04:05"))
+	// basicfont.Face7x13 is only 7x13px per glyph: unreadably small on an
+	// 800x480 panel (and on a downsampled terminal preview) if drawn at
+	// native size, so it's rendered small and then upscaled with nearest
+	// neighbor to a size that's actually legible.
+	drawScaledText(canvas, "Hello World", 40, 100, 5)
+	drawScaledText(canvas, now.Format("2006-01-02 15:04:05"), 40, 220, 3)
 
 	return fromGray(canvas)
+}
+
+// drawScaledText renders s with basicfont.Face7x13 onto a small offscreen
+// canvas, then blits it onto dst at (x, y) scaled up by an integer factor
+// using nearest-neighbor, so it stays a crisp 1-bit-per-pixel bitmap font
+// (no gray anti-aliasing, which the 4-level panel can't represent well).
+func drawScaledText(dst *image.Gray, s string, x, y, scale int) {
+	face := basicfont.Face7x13
+	metrics := face.Metrics()
+	width := font.MeasureString(face, s).Ceil()
+	height := (metrics.Ascent + metrics.Descent).Ceil()
+
+	small := image.NewGray(image.Rect(0, 0, width, height))
+	draw.Draw(small, small.Bounds(), image.White, image.Point{}, draw.Src)
+
+	d := &font.Drawer{
+		Dst:  small,
+		Src:  image.Black,
+		Face: face,
+		Dot:  fixed.P(0, metrics.Ascent.Ceil()),
+	}
+	d.DrawString(s)
+
+	dstBounds := dst.Bounds()
+	for sy := 0; sy < height; sy++ {
+		for sx := 0; sx < width; sx++ {
+			level := small.GrayAt(sx, sy)
+			for oy := 0; oy < scale; oy++ {
+				for ox := 0; ox < scale; ox++ {
+					px, py := x+sx*scale+ox, y+sy*scale+oy
+					if px < dstBounds.Dx() && py < dstBounds.Dy() {
+						dst.SetGray(px, py, level)
+					}
+				}
+			}
+		}
+	}
 }
 
 func fromGray(g *image.Gray) *GrayImage {
