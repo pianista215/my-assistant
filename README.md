@@ -59,20 +59,33 @@ curl -H "Authorization: Bearer $AUTH_TOKEN" http://localhost:8080/api/v1/display
 
 ## Herramienta de visualización (`cmd/preview`)
 
-Como no se usa un formato de imagen estándar, `cmd/preview` permite inspeccionar en la propia terminal qué se le está enviando al ESP32, sin necesidad de tener el panel físico. Pinta la imagen usando caracteres de bloque Unicode y colores ANSI de escala de grises (232-255), aprovechando semi-bloques (`▀`) para duplicar la resolución vertical aparente.
+Como no se usa un formato de imagen estándar, `cmd/preview` permite inspeccionar qué se le está enviando al ESP32 sin necesidad de tener el panel físico, ya sea en la propia terminal o como una imagen PNG a resolución nativa (800×480).
+
+**Modo imagen (recomendado para ver el contenido con nitidez):**
 
 ```bash
-# contra un buffer ya descargado
-go run ./cmd/preview --file buffer.bin
+# genera un PNG y lo abre con el visor/navegador por defecto del sistema
+go run ./cmd/preview --url http://localhost:8080/api/v1/display --token "$AUTH_TOKEN" --open
 
-# o directamente contra el servidor
-go run ./cmd/preview --url http://localhost:8080/api/v1/display --token "$AUTH_TOKEN"
+# o contra un buffer ya descargado
+go run ./cmd/preview --file buffer.bin --open
+
+# --png guarda en una ruta concreta en vez de a un temporal
+go run ./cmd/preview --file buffer.bin --png salida.png
+```
+
+`--open` usa `xdg-open` (Linux), `open` (macOS) o `start` (Windows) para abrir el PNG con la aplicación por defecto.
+
+**Modo terminal:**
+
+```bash
+go run ./cmd/preview --file buffer.bin
 
 # --cols controla el ancho de salida en columnas de terminal (por defecto 120)
 go run ./cmd/preview --file buffer.bin --cols 160
 ```
 
-Para imágenes con contenido fino (como texto), la herramienta reduce cada bloque de píxeles quedándose con el más oscuro, así el contenido delgado no desaparece al hacer submuestreo.
+Pinta la imagen usando caracteres de bloque Unicode y colores ANSI de escala de grises (232-255), aprovechando semi-bloques (`▀`) para duplicar la resolución vertical aparente. Para imágenes con contenido fino (como texto), tanto el modo terminal como la generación del PNG parten del mismo buffer decodificado a resolución completa, así que el PNG siempre muestra el detalle real sin submuestreo.
 
 ## Tests
 

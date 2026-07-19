@@ -1,10 +1,39 @@
 package main
 
 import (
+	"image/png"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/pianista215/my-assistant/internal/display"
 )
+
+func TestSavePNGWritesDecodableNativeResolutionImage(t *testing.T) {
+	img := display.NewGrayImage(display.Width, display.Height)
+	img.Set(10, 10, display.Black)
+
+	path := filepath.Join(t.TempDir(), "out.png")
+	if err := savePNG(path, img); err != nil {
+		t.Fatalf("savePNG() error = %v", err)
+	}
+
+	f, err := os.Open(path)
+	if err != nil {
+		t.Fatalf("opening saved PNG: %v", err)
+	}
+	defer f.Close()
+
+	decoded, err := png.Decode(f)
+	if err != nil {
+		t.Fatalf("decoding saved PNG: %v", err)
+	}
+
+	bounds := decoded.Bounds()
+	if bounds.Dx() != display.Width || bounds.Dy() != display.Height {
+		t.Fatalf("saved PNG size = %dx%d, want %dx%d", bounds.Dx(), bounds.Dy(), display.Width, display.Height)
+	}
+}
 
 // A single dark pixel anywhere in the block must win, even when it's a
 // lone stroke of 1px-wide text lost by naive nearest-neighbor sampling.
