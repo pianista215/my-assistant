@@ -1,91 +1,91 @@
 # my-assistant
 
-Servicio REST en Go que sirve a un ESP32 con pantalla e-ink qué debe mostrar. El ESP32 consulta el endpoint cada hora; el contenido irá cambiando con la hora (y, en iteraciones futuras, vendrá de Google Calendar y Google Sheets). Pensado para correr de forma autónoma en un VPS.
+A Go REST service that tells an ESP32 with an e-ink display what to show. The ESP32 polls the endpoint every hour; content will change with the time of day (and, in future iterations, will come from Google Calendar and Google Sheets). Designed to run autonomously on a VPS.
 
-**Estado actual (primera iteración)**: solo la estructura base — un endpoint protegido por token que devuelve una imagen placeholder ("Hello World" + hora actual). Todavía no hay integración con Google.
+**Current status (first iteration)**: just the base structure — a token-protected endpoint that returns a placeholder image ("Hello World" + current time). No Google integration yet.
 
-## Hardware objetivo
+## Target hardware
 
-Pantalla e-ink Seeed Studio reTerminal E1001 (familia "E10xx"), panel GDEY075T7, controlador UC8179:
+Seeed Studio reTerminal E1001 e-ink display (the "E10xx" family), GDEY075T7 panel, UC8179 controller:
 
-- Resolución: **800 × 480 px**
-- **4 niveles de gris** (negro, gris oscuro, gris claro, blanco) = 2 bits por píxel
+- Resolution: **800 × 480 px**
+- **4 grayscale levels** (black, dark gray, light gray, white) = 2 bits per pixel
 
-No existe un formato estándar ligero para 4 niveles de gris que valga la pena adoptar, así que el servidor usa un **formato binario propio** pensado para minimizar el uso de memoria en el ESP32 (ver [`internal/display/codec.go`](internal/display/codec.go)):
+There's no lightweight standard format worth adopting for 4 grayscale levels, so the server uses a **custom binary format** designed to minimize memory usage on the ESP32 (see [`internal/display/codec.go`](internal/display/codec.go)):
 
 ```
-offset  tamaño  campo
-0       4       magic "EINK"
-4       1       versión de formato
-5       2       ancho  (uint16 big-endian)
-7       2       alto   (uint16 big-endian)
-9       1       bits por píxel
-10      ...     datos de píxel empaquetados a 2 bits/píxel (4 píxeles por byte)
+offset  size  field
+0       4     magic "EINK"
+4       1     format version
+5       2     width  (big-endian uint16)
+7       2     height (big-endian uint16)
+9       1     bits per pixel
+10      ...   pixel data packed at 2 bits/pixel (4 pixels per byte)
 ```
 
-## Requisitos
+## Requirements
 
 - Go 1.18+
 
-## Configuración
+## Configuration
 
 ```bash
 cp .env.example .env
-# edita .env y pon un AUTH_TOKEN aleatorio, ej: openssl rand -hex 32
+# edit .env and set a random AUTH_TOKEN, e.g.: openssl rand -hex 32
 ```
 
-En producción (VPS) no se usa `.env`: las variables de entorno reales se definen en el propio servicio (por ejemplo `EnvironmentFile=` en la unidad systemd).
+In production (VPS) `.env` isn't used: real environment variables are set on the service itself (e.g. `EnvironmentFile=` in the systemd unit).
 
-## Arrancar el servidor
+## Running the server
 
 ```bash
 go run ./cmd/server
 ```
 
-Por defecto escucha en `:8080` (configurable con `PORT`).
+Listens on `:8080` by default (configurable via `PORT`).
 
 ## Endpoint
 
 `GET /api/v1/display`
 
-Requiere cabecera `Authorization: Bearer <AUTH_TOKEN>`. El mismo token debe estar fijado en el firmware del ESP32.
+Requires an `Authorization: Bearer <AUTH_TOKEN>` header. The same token must be set in the ESP32 firmware.
 
 ```bash
 curl -H "Authorization: Bearer $AUTH_TOKEN" http://localhost:8080/api/v1/display -o buffer.bin
 ```
 
-- Sin token o con token incorrecto → `401 Unauthorized`.
-- Con token correcto → `200 OK`, `Content-Type: application/octet-stream`, cuerpo = imagen en el formato binario descrito arriba.
+- No token or wrong token → `401 Unauthorized`.
+- Correct token → `200 OK`, `Content-Type: application/octet-stream`, body = image in the binary format described above.
 
-## Herramienta de visualización (`cmd/preview`)
+## Visualization tool (`cmd/preview`)
 
-Como no se usa un formato de imagen estándar, `cmd/preview` permite inspeccionar qué se le está enviando al ESP32 sin necesidad de tener el panel físico, ya sea en la propia terminal o como una imagen PNG a resolución nativa (800×480).
+Since no standard image format is used, `cmd/preview` lets you inspect what's being sent to the ESP32 without owning the physical panel, either in the terminal or as a native-resolution (800×480) PNG image.
 
-**Modo imagen (recomendado para ver el contenido con nitidez):**
+**Image mode (recommended for a sharp view of the content):**
 
 ```bash
-# genera un PNG y lo abre con el visor/navegador por defecto del sistema
+# generate a PNG and open it with the system's default viewer/browser
 go run ./cmd/preview --url http://localhost:8080/api/v1/display --token "$AUTH_TOKEN" --open
 
-# o contra un buffer ya descargado
+# or against an already downloaded buffer
 go run ./cmd/preview --file buffer.bin --open
 
-# --png guarda en una ruta concreta en vez de a un temporal
-go run ./cmd/preview --file buffer.bin --png salida.png
+# --png saves to a specific path instead of a temp file
+go run ./cmd/preview --file buffer.bin --png output.png
 ```
 
-`--open` usa `xdg-open` (Linux), `open` (macOS) o `start` (Windows) para abrir el PNG con la aplicación por defecto.
+`--open` uses `xdg-open` (Linux), `open` (macOS), or `start` (Windows) to open the PNG with the default application.
 
-**Modo terminal:**
+**Terminal mode:**
 
 ```bash
 go run ./cmd/preview --file buffer.bin
 
-# --cols controla el ancho de salida en columnas de terminal (por defecto 120)
+# --cols controls the output width in terminal columns (default 120)
 go run ./cmd/preview --file buffer.bin --cols 160
 ```
 
-Pinta la imagen usando caracteres de bloque Unicode y colores ANSI de escala de grises (232-255), aprovechando semi-bloques (`▀`) para duplicar la resolución vertical aparente. Para imágenes con contenido fino (como texto), tanto el modo terminal como la generación del PNG parten del mismo buffer decodificado a resolución completa, así que el PNG siempre muestra el detalle real sin submuestreo.
+Renders the image using Unicode block characters and ANSI grayscale colors (232-255), using half-blocks (`▀`) to double the apparent vertical resolution. Both the terminal mode and the PNG generation start from the same fully decoded buffer, so the PNG always shows the real detail without downsampling.
 
 ## Tests
 
@@ -93,23 +93,23 @@ Pinta la imagen usando caracteres de bloque Unicode y colores ANSI de escala de 
 go test ./...
 ```
 
-Cubren: validación del token (auth middleware), codificación/decodificación round-trip del formato binario propio, y el handler del endpoint vía `httptest`.
+Covers: token validation (auth middleware), round-trip encoding/decoding of the custom binary format, and the endpoint handler via `httptest`.
 
-## Estructura del proyecto
+## Project structure
 
 ```
 cmd/
-  server/     # entrypoint del servidor HTTP
-  preview/    # CLI de visualización del buffer en terminal
+  server/     # HTTP server entrypoint
+  preview/    # terminal/PNG buffer visualization CLI
 internal/
-  config/     # carga de configuración (token, puerto) desde entorno/.env
-  display/    # generación de la imagen a mostrar + codec del formato binario propio
-  server/     # router, middleware de auth y handlers HTTP
+  config/     # configuration loading (token, port) from environment/.env
+  display/    # image generation + custom binary format codec
+  server/     # router, auth middleware, and HTTP handlers
 ```
 
 ## Roadmap
 
-- Integración con Google Calendar y Google Sheets como fuente real del contenido a mostrar (sustituirá al placeholder "Hello World").
-- Lógica de variación por hora: qué se muestra y con qué formato según el momento del día.
-- Firmware del ESP32 que consulta este endpoint cada hora y pinta el buffer recibido en el panel e-ink.
-- Despliegue en VPS (systemd, variables de entorno reales).
+- Google Calendar and Google Sheets integration as the real content source (will replace the "Hello World" placeholder).
+- Time-of-day variation logic: what's shown and in what format depending on the time.
+- ESP32 firmware that polls this endpoint hourly and paints the received buffer on the e-ink panel.
+- VPS deployment (systemd, real environment variables).
