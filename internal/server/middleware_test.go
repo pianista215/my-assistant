@@ -1,16 +1,36 @@
 package server
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
+	"github.com/pianista215/my-assistant/internal/calendar"
 	"github.com/pianista215/my-assistant/internal/config"
 )
 
+// fakeCalendarFetcher lets tests control what handleDisplay sees without
+// making a real Google Calendar API call.
+type fakeCalendarFetcher struct {
+	rows []calendar.Row
+	err  error
+}
+
+func (f fakeCalendarFetcher) FetchToday(ctx context.Context) ([]calendar.Row, error) {
+	return f.rows, f.err
+}
+
 func newTestServer(t *testing.T) *Server {
 	t.Helper()
-	return New(&config.Config{AuthToken: "correct-token", Port: "0"})
+	return newTestServerWithFetcher(t, fakeCalendarFetcher{})
+}
+
+func newTestServerWithFetcher(t *testing.T, fetcher CalendarFetcher) *Server {
+	t.Helper()
+	cfg := &config.Config{AuthToken: "correct-token", Port: "0", Location: time.UTC}
+	return New(cfg, fetcher)
 }
 
 func TestRequireAuth(t *testing.T) {

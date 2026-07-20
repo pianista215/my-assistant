@@ -27,6 +27,9 @@ go.work.sum
 # env file
 .env
 
+# OAuth client config and generated credentials (contain secrets, never commit)
+/secrets/
+
 # Editor/IDE
 # .idea/
 # .vscode/

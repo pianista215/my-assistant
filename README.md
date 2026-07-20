@@ -2,7 +2,7 @@
 
 A Go REST service that tells an ESP32 with an e-ink display what to show. The ESP32 polls the endpoint every hour; content will change with the time of day (and, in future iterations, will come from Google Calendar and Google Sheets). Designed to run autonomously on a VPS.
 
-**Current status (first iteration)**: just the base structure — a token-protected endpoint that returns a placeholder image ("Hello World" + current time). No Google integration yet.
+**Current status**: `/api/v1/display` renders today's agenda from a single reference Google Calendar — one row per event/reminder, dropped an hour after it ends.
 
 ## Target hardware
 
@@ -36,13 +36,39 @@ cp .env.example .env
 
 In production (VPS) `.env` isn't used: real environment variables are set on the service itself (e.g. `EnvironmentFile=` in the systemd unit).
 
+### Google Calendar setup
+
+The service reads one fixed reference calendar. The original plan was a service account key, but personal (org-less) Google Cloud projects have "Secure by Default" policies that block service account key creation with no self-serve override — see [`iam.disableServiceAccountKeyCreation`](https://cloud.google.com/resource-manager/docs/organization-policy/org-policy-constraints). Instead, this uses a **one-time OAuth authorization of your own Google account**, whose resulting credentials file is then used unattended (no repeated login, no browser needed at runtime):
+
+1. In [Google Cloud Console](https://console.cloud.google.com/), create (or reuse) a project and enable the **Google Calendar API**.
+2. **APIs & Services → OAuth consent screen**: user type "External" (the only option without a Workspace organization), add the `.../auth/calendar.readonly` scope, and set publishing status to **"In production"** (not "Testing" — Testing-mode refresh tokens expire after 7 days; Production ones don't, even for an unverified app with a single user). You'll see an "unverified app" warning when authorizing below — that's expected for a personal, single-user app; click through "Advanced → Go to (app name)".
+3. **APIs & Services → Credentials → Create credentials → OAuth client ID**, application type **"Desktop app"**. Download the resulting JSON.
+4. Save that file as `secrets/oauth-client.json` in the repo root (the `secrets/` directory is gitignored — never commit it).
+5. Run the one-time setup tool: `go run ./cmd/oauthsetup`. It opens a browser to Google's consent screen, catches the redirect on a local loopback listener, writes `secrets/credentials.json` (an `authorized_user`-format credentials file), and then prints every calendar the authorized account can see, with its ID — pick the one you want as your reference calendar from that list. Run this once per Google account; the server itself never needs a browser or interactive login, at any point, including on the VPS.
+6. Set the three env vars below (see `.env.example`):
+   - `GOOGLE_CREDENTIALS_FILE`: path to `secrets/credentials.json` from step 5.
+   - `CALENDAR_ID`: one of the IDs printed in step 5 (`primary` for your main calendar, or a `...@group.calendar.google.com` id for a secondary one).
+   - `TZ`: the timezone used to compute "today" and format event times (e.g. `Europe/Madrid`).
+
+No calendar sharing step is needed: since this authorizes your own Google account, the service sees whatever calendars that account already has access to.
+
 ## Running the server
 
 ```bash
 go run ./cmd/server
 ```
 
-Listens on `:8080` by default (configurable via `PORT`).
+Listens on `:8080` by default (configurable via `PORT`). Fails immediately at startup (before serving anything) if `AUTH_TOKEN`, `GOOGLE_CREDENTIALS_FILE`, `CALENDAR_ID`, or `TZ` is missing or invalid — see [Configuration](#configuration) and [Google Calendar setup](#google-calendar-setup) above to get all four in place first.
+
+**First-time setup, end to end:**
+
+```bash
+cp .env.example .env               # then edit it: AUTH_TOKEN, TZ
+go run ./cmd/oauthsetup             # one-time OAuth login; prints calendar IDs
+# edit .env: set GOOGLE_CREDENTIALS_FILE=secrets/credentials.json
+# edit .env: set CALENDAR_ID to one of the printed IDs
+go run ./cmd/server
+```
 
 ## Endpoint
 
@@ -56,6 +82,8 @@ curl -H "Authorization: Bearer $AUTH_TOKEN" http://localhost:8080/api/v1/display
 
 - No token or wrong token → `401 Unauthorized`.
 - Correct token → `200 OK`, `Content-Type: application/octet-stream`, body = image in the binary format described above.
+
+The image shows today's agenda: a header with the date, then one row per event/reminder, each dropped from the list an hour after it ends (so only what's upcoming, ongoing, or just finished stays visible). A reminder (a calendar item with no real duration) shows just its start time; a regular event shows start-end; an all-day item is marked "All day". If the calendar can't be fetched, the endpoint still returns `200` with a rendered error message instead of the agenda, so a broken integration is visible on the panel itself.
 
 ## Visualization tool (`cmd/preview`)
 
@@ -87,29 +115,51 @@ go run ./cmd/preview --file buffer.bin --cols 160
 
 Renders the image using Unicode block characters and ANSI grayscale colors (232-255), using half-blocks (`▀`) to double the apparent vertical resolution. Both the terminal mode and the PNG generation start from the same fully decoded buffer, so the PNG always shows the real detail without downsampling.
 
+## OAuth setup tool (`cmd/oauthsetup`)
+
+Turns the OAuth desktop client downloaded from Google Cloud Console into the long-lived `authorized_user` credentials file described in [Google Calendar setup](#google-calendar-setup) above, then prints the calendars the authorized account can see (name + ID) so you know what to set `CALENDAR_ID` to. Run once per Google account:
+
+```bash
+go run ./cmd/oauthsetup
+# --client-json and --out override the default secrets/ paths
+```
+
+## Diagnostic tool (`cmd/calendarcheck`)
+
+Dumps today's raw events from the configured reference calendar as JSON, straight from the Google Calendar API (bypassing the app's own event model). Useful to check how a given calendar item actually looks — e.g. whether a "reminder" really comes through with an identical start/end, or to debug why an event isn't showing up as expected.
+
+```bash
+go run ./cmd/calendarcheck
+```
+
+Requires the same env vars as the server (`GOOGLE_CREDENTIALS_FILE`, `CALENDAR_ID`, `TZ`).
+
 ## Tests
 
 ```bash
 go test ./...
 ```
 
-Covers: token validation (auth middleware), round-trip encoding/decoding of the custom binary format, and the endpoint handler via `httptest`.
+Covers: token validation (auth middleware), round-trip encoding/decoding of the custom binary format, the endpoint handler via `httptest` (including calendar fetch success/failure, using a fake calendar fetcher — no real network calls), config validation, and calendar event classification (reminder vs. event vs. all-day, and the "hide an hour after it ends" rule).
 
 ## Project structure
 
 ```
 cmd/
-  server/     # HTTP server entrypoint
-  preview/    # terminal/PNG buffer visualization CLI
+  server/        # HTTP server entrypoint
+  preview/       # terminal/PNG buffer visualization CLI
+  oauthsetup/    # one-time tool: OAuth desktop client JSON -> long-lived credentials file
+  calendarcheck/ # dumps today's raw Calendar API events as JSON, for debugging
 internal/
-  config/     # configuration loading (token, port) from environment/.env
+  config/     # configuration loading (token, port, Google credentials, calendar ID, timezone) from environment/.env
+  calendar/   # Google Calendar client + today's agenda as a list of Row
   display/    # image generation + custom binary format codec
   server/     # router, auth middleware, and HTTP handlers
 ```
 
 ## Roadmap
 
-- Google Calendar and Google Sheets integration as the real content source (will replace the "Hello World" placeholder).
+- Google Sheets integration as an additional content source.
 - Time-of-day variation logic: what's shown and in what format depending on the time.
 - ESP32 firmware that polls this endpoint hourly and paints the received buffer on the e-ink panel.
 - VPS deployment (systemd, real environment variables).
