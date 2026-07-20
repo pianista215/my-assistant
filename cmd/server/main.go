@@ -9,6 +9,7 @@ import (
 	"github.com/pianista215/my-assistant/internal/calendar"
 	"github.com/pianista215/my-assistant/internal/config"
 	"github.com/pianista215/my-assistant/internal/server"
+	"github.com/pianista215/my-assistant/internal/shoppinglist"
 )
 
 func main() {
@@ -22,7 +23,12 @@ func main() {
 		log.Fatalf("calendar: %v", err)
 	}
 
-	srv := server.New(cfg, calClient)
+	shoppingListClient, err := shoppinglist.NewClient(context.Background(), cfg.GoogleCredentialsFile, cfg.GoogleSheetID)
+	if err != nil {
+		log.Fatalf("shoppinglist: %v", err)
+	}
+
+	srv := server.New(cfg, calClient, shoppingListClient)
 
 	addr := ":" + cfg.Port
 	log.Printf("listening on %s", addr)

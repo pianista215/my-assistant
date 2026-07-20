@@ -11,6 +11,7 @@ var requiredEnv = map[string]string{
 	"AUTH_TOKEN":              "some-token",
 	"GOOGLE_CREDENTIALS_FILE": "/path/to/credentials.json",
 	"CALENDAR_ID":             "reference@group.calendar.google.com",
+	"GOOGLE_SHEET_ID":         "1a2B3c4D5e6F7g8H9iJ0kLmNoPqRsTuVwXyZ",
 	"TZ":                      "Europe/Madrid",
 }
 
@@ -60,6 +61,9 @@ func TestLoadSucceeds(t *testing.T) {
 	}
 	if cfg.Location.String() != "Europe/Madrid" {
 		t.Fatalf("Location = %q, want Europe/Madrid", cfg.Location.String())
+	}
+	if cfg.GoogleSheetID != requiredEnv["GOOGLE_SHEET_ID"] {
+		t.Fatalf("GoogleSheetID = %q, want %q", cfg.GoogleSheetID, requiredEnv["GOOGLE_SHEET_ID"])
 	}
 }
 
