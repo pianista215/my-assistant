@@ -87,3 +87,36 @@ func TestNewHelloWorldProducesPanelSizedImage(t *testing.T) {
 		t.Fatal("expected the rendered text to produce at least one non-white pixel")
 	}
 }
+
+func TestNewTextRowsProducesPanelSizedImage(t *testing.T) {
+	cases := []struct {
+		name   string
+		header string
+		rows   []string
+	}{
+		{"multiple rows", "Monday, 19 July 2026", []string{"09:00  Dentist", "10:00-11:00  Standup"}},
+		{"no rows", "Monday, 19 July 2026", []string{"No events today"}},
+		{"error message", "Could not load calendar", []string{"2026-07-19 15:04:05", "boom"}},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			img := NewTextRows(tc.header, tc.rows)
+
+			if img.Width != Width || img.Height != Height {
+				t.Fatalf("dimensions = %dx%d, want %dx%d", img.Width, img.Height, Width, Height)
+			}
+
+			var sawNonWhite bool
+			for _, level := range img.Pixels {
+				if level != White {
+					sawNonWhite = true
+					break
+				}
+			}
+			if !sawNonWhite {
+				t.Fatal("expected the rendered text to produce at least one non-white pixel")
+			}
+		})
+	}
+}

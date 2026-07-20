@@ -2,9 +2,11 @@
 package main
 
 import (
+	"context"
 	"log"
 	"net/http"
 
+	"github.com/pianista215/my-assistant/internal/calendar"
 	"github.com/pianista215/my-assistant/internal/config"
 	"github.com/pianista215/my-assistant/internal/server"
 )
@@ -15,7 +17,12 @@ func main() {
 		log.Fatalf("config: %v", err)
 	}
 
-	srv := server.New(cfg)
+	calClient, err := calendar.NewClient(context.Background(), cfg.GoogleCredentialsFile, cfg.CalendarID, cfg.Location)
+	if err != nil {
+		log.Fatalf("calendar: %v", err)
+	}
+
+	srv := server.New(cfg, calClient)
 
 	addr := ":" + cfg.Port
 	log.Printf("listening on %s", addr)

@@ -71,6 +71,30 @@ func NewHelloWorld(now time.Time) *GrayImage {
 	return fromGray(canvas)
 }
 
+// NewTextRows renders a header line followed by a list of body rows, one
+// per line. It's a generic enough primitive to serve any content source
+// that reduces to "a title plus a handful of text rows" (today's agenda,
+// an error message, and future content sources alike) without this
+// package needing to know anything about where the text came from.
+func NewTextRows(header string, rows []string) *GrayImage {
+	canvas := image.NewGray(image.Rect(0, 0, Width, Height))
+	draw.Draw(canvas, canvas.Bounds(), image.White, image.Point{}, draw.Src)
+
+	drawScaledText(canvas, header, 40, 40, 4)
+
+	const (
+		firstRowY = 140
+		rowHeight = 40
+	)
+	y := firstRowY
+	for _, row := range rows {
+		drawScaledText(canvas, row, 40, y, 2)
+		y += rowHeight
+	}
+
+	return fromGray(canvas)
+}
+
 // drawScaledText renders s with basicfont.Face7x13 onto a small offscreen
 // canvas, then blits it onto dst at (x, y) scaled up by an integer factor
 // using nearest-neighbor, so it stays a crisp 1-bit-per-pixel bitmap font
