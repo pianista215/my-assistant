@@ -10,9 +10,12 @@ import (
 )
 
 // handleDisplay serves the image the ESP32 should render: today's agenda
-// from the reference calendar, or a rendered error message if it couldn't
-// be fetched (so a broken integration is visible on the panel itself,
-// rather than a stale image or a bare error status).
+// from the reference calendar followed by the current shopping list, or a
+// rendered error message if the calendar couldn't be fetched (so a broken
+// integration is visible on the panel itself, rather than a stale image
+// or a bare error status). A shopping list fetch failure is less
+// critical — it doesn't take down the whole screen, just replaces that
+// section with an error line, so the agenda stays visible.
 func (s *Server) handleDisplay(w http.ResponseWriter, r *http.Request) {
 	now := time.Now().In(s.cfg.Location)
 
@@ -25,7 +28,14 @@ func (s *Server) handleDisplay(w http.ResponseWriter, r *http.Request) {
 			err.Error(),
 		})
 	} else {
-		img = display.NewTextRows(now.Format("Monday, 2 January 2006"), agendaLines(rows))
+		items, err := s.shoppingList.FetchItems(r.Context())
+		if err != nil {
+			log.Printf("server: fetching shopping list: %v", err)
+		}
+		img = display.NewSections(now.Format("Monday, 2 January 2006"), []display.Section{
+			{Lines: agendaLines(rows)},
+			{Title: "Lista de la compra", Lines: shoppingListLines(items, err)},
+		})
 	}
 
 	data, err := display.Encode(img)
@@ -48,4 +58,15 @@ func agendaLines(rows []calendar.Row) []string {
 		lines[i] = row.String()
 	}
 	return lines
+}
+
+func shoppingListLines(items []string, err error) []string {
+	switch {
+	case err != nil:
+		return []string{"No se pudo cargar"}
+	case len(items) == 0:
+		return []string{"(vacía)"}
+	default:
+		return items
+	}
 }

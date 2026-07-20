@@ -22,15 +22,26 @@ func (f fakeCalendarFetcher) FetchToday(ctx context.Context) ([]calendar.Row, er
 	return f.rows, f.err
 }
 
-func newTestServer(t *testing.T) *Server {
-	t.Helper()
-	return newTestServerWithFetcher(t, fakeCalendarFetcher{})
+// fakeShoppingListFetcher lets tests control what handleDisplay sees
+// without making a real Google Sheets API call.
+type fakeShoppingListFetcher struct {
+	items []string
+	err   error
 }
 
-func newTestServerWithFetcher(t *testing.T, fetcher CalendarFetcher) *Server {
+func (f fakeShoppingListFetcher) FetchItems(ctx context.Context) ([]string, error) {
+	return f.items, f.err
+}
+
+func newTestServer(t *testing.T) *Server {
+	t.Helper()
+	return newTestServerWithFetchers(t, fakeCalendarFetcher{}, fakeShoppingListFetcher{})
+}
+
+func newTestServerWithFetchers(t *testing.T, calendarFetcher CalendarFetcher, shoppingListFetcher ShoppingListFetcher) *Server {
 	t.Helper()
 	cfg := &config.Config{AuthToken: "correct-token", Port: "0", Location: time.UTC}
-	return New(cfg, fetcher)
+	return New(cfg, calendarFetcher, shoppingListFetcher)
 }
 
 func TestRequireAuth(t *testing.T) {

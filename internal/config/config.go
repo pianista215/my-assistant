@@ -22,6 +22,10 @@ type Config struct {
 	GoogleCredentialsFile string
 	// CalendarID is the fixed reference calendar to read events from.
 	CalendarID string
+	// GoogleSheetID is the fixed reference spreadsheet to read the
+	// shopping list from (its first tab, one product per row from row 2
+	// on). Uses the same GoogleCredentialsFile as the calendar.
+	GoogleSheetID string
 	// Location is the timezone used to compute "today" and to format
 	// event times, parsed from the TZ environment variable.
 	Location *time.Location
@@ -53,6 +57,11 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("config: CALENDAR_ID environment variable is required")
 	}
 
+	sheetID := os.Getenv("GOOGLE_SHEET_ID")
+	if sheetID == "" {
+		return nil, fmt.Errorf("config: GOOGLE_SHEET_ID environment variable is required")
+	}
+
 	tz := os.Getenv("TZ")
 	if tz == "" {
 		return nil, fmt.Errorf("config: TZ environment variable is required")
@@ -67,6 +76,7 @@ func Load() (*Config, error) {
 		Port:                  port,
 		GoogleCredentialsFile: credentialsFile,
 		CalendarID:            calendarID,
+		GoogleSheetID:         sheetID,
 		Location:              loc,
 	}, nil
 }

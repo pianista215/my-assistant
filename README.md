@@ -2,7 +2,7 @@
 
 A Go REST service that tells an ESP32 with an e-ink display what to show. The ESP32 polls the endpoint every hour; content will change with the time of day (and, in future iterations, will come from Google Calendar and Google Sheets). Designed to run autonomously on a VPS.
 
-**Current status**: `/api/v1/display` renders today's agenda from a single reference Google Calendar — one row per event/reminder, dropped an hour after it ends.
+**Current status**: `/api/v1/display` renders today's agenda from a single reference Google Calendar — one row per event/reminder, dropped an hour after it ends — followed by the current shopping list read from a Google Sheet.
 
 ## Target hardware
 
@@ -52,13 +52,23 @@ The service reads one fixed reference calendar. The original plan was a service 
 
 No calendar sharing step is needed: since this authorizes your own Google account, the service sees whatever calendars that account already has access to.
 
+### Google Sheets setup
+
+The service reads the current shopping list from a single reference spreadsheet — its first tab, one product per row starting at row 2 (row 1 is a header for your own use, e.g. "Producto"; it's never read). Reuses the same OAuth credentials file as Calendar:
+
+1. In the same [Google Cloud Console](https://console.cloud.google.com/) project, enable the **Google Sheets API**.
+2. On the **OAuth consent screen**, add the `.../auth/spreadsheets.readonly` scope alongside the existing calendar one.
+3. Create the spreadsheet (or reuse one you already have), with a header in row 1 and products starting at row 2 of the first tab.
+4. Set `GOOGLE_SHEET_ID` (see `.env.example`) to the ID from the sheet's URL: `https://docs.google.com/spreadsheets/d/<GOOGLE_SHEET_ID>/edit`.
+5. **If `secrets/credentials.json` already exists from a previous Calendar-only setup, re-run `go run ./cmd/oauthsetup`** — Google requires re-consent whenever the requested scope set changes, so the existing refresh token won't grant Sheets access on its own.
+
 ## Running the server
 
 ```bash
 go run ./cmd/server
 ```
 
-Listens on `:8080` by default (configurable via `PORT`). Fails immediately at startup (before serving anything) if `AUTH_TOKEN`, `GOOGLE_CREDENTIALS_FILE`, `CALENDAR_ID`, or `TZ` is missing or invalid — see [Configuration](#configuration) and [Google Calendar setup](#google-calendar-setup) above to get all four in place first.
+Listens on `:8080` by default (configurable via `PORT`). Fails immediately at startup (before serving anything) if `AUTH_TOKEN`, `GOOGLE_CREDENTIALS_FILE`, `CALENDAR_ID`, `GOOGLE_SHEET_ID`, or `TZ` is missing or invalid — see [Configuration](#configuration), [Google Calendar setup](#google-calendar-setup), and [Google Sheets setup](#google-sheets-setup) above to get all five in place first.
 
 **First-time setup, end to end:**
 
@@ -67,6 +77,7 @@ cp .env.example .env               # then edit it: AUTH_TOKEN, TZ
 go run ./cmd/oauthsetup             # one-time OAuth login; prints calendar IDs
 # edit .env: set GOOGLE_CREDENTIALS_FILE=secrets/credentials.json
 # edit .env: set CALENDAR_ID to one of the printed IDs
+# edit .env: set GOOGLE_SHEET_ID to your shopping-list spreadsheet's ID
 go run ./cmd/server
 ```
 
@@ -83,7 +94,7 @@ curl -H "Authorization: Bearer $AUTH_TOKEN" http://localhost:8080/api/v1/display
 - No token or wrong token → `401 Unauthorized`.
 - Correct token → `200 OK`, `Content-Type: application/octet-stream`, body = image in the binary format described above.
 
-The image shows today's agenda: a header with the date, then one row per event/reminder, each dropped from the list an hour after it ends (so only what's upcoming, ongoing, or just finished stays visible). A reminder (a calendar item with no real duration) shows just its start time; a regular event shows start-end; an all-day item is marked "All day". If the calendar can't be fetched, the endpoint still returns `200` with a rendered error message instead of the agenda, so a broken integration is visible on the panel itself.
+The image shows today's agenda: a header with the date, then one row per event/reminder, each dropped from the list an hour after it ends (so only what's upcoming, ongoing, or just finished stays visible). A reminder (a calendar item with no real duration) shows just its start time; a regular event shows start-end; an all-day item is marked "All day". Below the agenda, one row per item currently on the shopping list. If the calendar can't be fetched, the endpoint still returns `200` with a rendered error message instead of the agenda, so a broken integration is visible on the panel itself; if only the shopping list can't be fetched, the agenda stays visible and just that section shows an error line instead.
 
 ## Visualization tool (`cmd/preview`)
 
@@ -134,13 +145,23 @@ go run ./cmd/calendarcheck
 
 Requires the same env vars as the server (`GOOGLE_CREDENTIALS_FILE`, `CALENDAR_ID`, `TZ`).
 
+## Diagnostic tool (`cmd/sheetscheck`)
+
+Dumps the raw values read from the configured shopping-list spreadsheet as JSON, straight from the Google Sheets API (bypassing the app's own parsing/blank-row filtering). Useful to check exactly how a row comes through — e.g. to confirm what a genuinely blank row looks like.
+
+```bash
+go run ./cmd/sheetscheck
+```
+
+Requires the same env vars as the server (`GOOGLE_CREDENTIALS_FILE`, `GOOGLE_SHEET_ID`).
+
 ## Tests
 
 ```bash
 go test ./...
 ```
 
-Covers: token validation (auth middleware), round-trip encoding/decoding of the custom binary format, the endpoint handler via `httptest` (including calendar fetch success/failure, using a fake calendar fetcher — no real network calls), config validation, and calendar event classification (reminder vs. event vs. all-day, and the "hide an hour after it ends" rule).
+Covers: token validation (auth middleware), round-trip encoding/decoding of the custom binary format, the endpoint handler via `httptest` (including calendar and shopping list fetch success/failure, using fake fetchers — no real network calls), config validation, calendar event classification (reminder vs. event vs. all-day, and the "hide an hour after it ends" rule), and shopping-list row parsing (blank/whitespace/non-string rows dropped).
 
 ## Project structure
 
@@ -150,16 +171,17 @@ cmd/
   preview/       # terminal/PNG buffer visualization CLI
   oauthsetup/    # one-time tool: OAuth desktop client JSON -> long-lived credentials file
   calendarcheck/ # dumps today's raw Calendar API events as JSON, for debugging
+  sheetscheck/   # dumps the raw shopping-list sheet values as JSON, for debugging
 internal/
-  config/     # configuration loading (token, port, Google credentials, calendar ID, timezone) from environment/.env
-  calendar/   # Google Calendar client + today's agenda as a list of Row
-  display/    # image generation + custom binary format codec
-  server/     # router, auth middleware, and HTTP handlers
+  config/       # configuration loading (token, port, Google credentials, calendar/sheet IDs, timezone) from environment/.env
+  calendar/     # Google Calendar client + today's agenda as a list of Row
+  shoppinglist/ # Google Sheets client + the current shopping list as a list of items
+  display/      # image generation + custom binary format codec
+  server/       # router, auth middleware, and HTTP handlers
 ```
 
 ## Roadmap
 
-- Google Sheets integration as an additional content source.
 - Time-of-day variation logic: what's shown and in what format depending on the time.
 - ESP32 firmware that polls this endpoint hourly and paints the received buffer on the e-ink panel.
 - VPS deployment (systemd, real environment variables).

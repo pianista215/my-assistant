@@ -17,14 +17,22 @@ type CalendarFetcher interface {
 	FetchToday(ctx context.Context) ([]calendar.Row, error)
 }
 
-type Server struct {
-	cfg      *config.Config
-	calendar CalendarFetcher
-	mux      *http.ServeMux
+// ShoppingListFetcher returns the current shopping list items. Satisfied
+// in production by internal/shoppinglist.Client; tests can supply a fake
+// instead of hitting the network.
+type ShoppingListFetcher interface {
+	FetchItems(ctx context.Context) ([]string, error)
 }
 
-func New(cfg *config.Config, fetcher CalendarFetcher) *Server {
-	s := &Server{cfg: cfg, calendar: fetcher, mux: http.NewServeMux()}
+type Server struct {
+	cfg          *config.Config
+	calendar     CalendarFetcher
+	shoppingList ShoppingListFetcher
+	mux          *http.ServeMux
+}
+
+func New(cfg *config.Config, calendarFetcher CalendarFetcher, shoppingListFetcher ShoppingListFetcher) *Server {
+	s := &Server{cfg: cfg, calendar: calendarFetcher, shoppingList: shoppingListFetcher, mux: http.NewServeMux()}
 	s.routes()
 	return s
 }

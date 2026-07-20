@@ -4,10 +4,14 @@
 //
 // Run it once, on any machine with a browser (it doesn't need to be the
 // VPS). It opens a consent screen, catches the redirect on a local
-// loopback listener, and writes an "authorized_user" credentials file.
-// That file works with internal/calendar's NewClient exactly like a
-// service account key would — option.WithCredentialsFile auto-detects
-// both formats — so no server code needs to change to use it.
+// loopback listener, and writes an "authorized_user" credentials file
+// scoped for both Calendar and Sheets readonly access. That file works
+// with internal/calendar's and internal/shoppinglist's NewClient exactly
+// like a service account key would — option.WithCredentialsFile
+// auto-detects both formats — so no server code needs to change to use
+// it. If the requested scopes ever change, existing users must re-run
+// this tool once to re-consent; Google won't silently add scopes to an
+// already-issued refresh token.
 package main
 
 import (
@@ -28,6 +32,7 @@ import (
 	"golang.org/x/oauth2/google"
 	googlecalendar "google.golang.org/api/calendar/v3"
 	"google.golang.org/api/option"
+	"google.golang.org/api/sheets/v4"
 )
 
 func main() {
@@ -39,7 +44,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("reading client JSON: %v", err)
 	}
-	cfg, err := google.ConfigFromJSON(data, googlecalendar.CalendarReadonlyScope)
+	cfg, err := google.ConfigFromJSON(data, googlecalendar.CalendarReadonlyScope, sheets.SpreadsheetsReadonlyScope)
 	if err != nil {
 		log.Fatalf("parsing client JSON: %v", err)
 	}

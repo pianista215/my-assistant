@@ -26,19 +26,31 @@ func TestHandleDisplayRequiresToken(t *testing.T) {
 
 func TestHandleDisplayReturnsEncodedImage(t *testing.T) {
 	cases := []struct {
-		name    string
-		fetcher CalendarFetcher
+		name            string
+		calendarFetcher CalendarFetcher
+		shoppingFetcher ShoppingListFetcher
 	}{
-		{"today's agenda", fakeCalendarFetcher{rows: []calendar.Row{
-			{Summary: "Dentist", Start: time.Now(), End: time.Now().Add(30 * time.Minute)},
-		}}},
-		{"empty agenda", fakeCalendarFetcher{}},
-		{"fetch error", fakeCalendarFetcher{err: errors.New("boom")}},
+		{
+			"today's agenda",
+			fakeCalendarFetcher{rows: []calendar.Row{
+				{Summary: "Dentist", Start: time.Now(), End: time.Now().Add(30 * time.Minute)},
+			}},
+			fakeShoppingListFetcher{},
+		},
+		{"empty agenda", fakeCalendarFetcher{}, fakeShoppingListFetcher{}},
+		{"calendar fetch error", fakeCalendarFetcher{err: errors.New("boom")}, fakeShoppingListFetcher{}},
+		{
+			"shopping list items",
+			fakeCalendarFetcher{},
+			fakeShoppingListFetcher{items: []string{"Leche", "Pan"}},
+		},
+		{"empty shopping list", fakeCalendarFetcher{}, fakeShoppingListFetcher{}},
+		{"shopping list fetch error", fakeCalendarFetcher{}, fakeShoppingListFetcher{err: errors.New("boom")}},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			srv := newTestServerWithFetcher(t, tc.fetcher)
+			srv := newTestServerWithFetchers(t, tc.calendarFetcher, tc.shoppingFetcher)
 
 			req := httptest.NewRequest(http.MethodGet, "/api/v1/display", nil)
 			req.Header.Set("Authorization", "Bearer correct-token")
