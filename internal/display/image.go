@@ -126,6 +126,29 @@ func NewTextRows(header string, rows []string) *GrayImage {
 	return NewSections(header, []Section{{Lines: rows}})
 }
 
+// Layout constants shared by NewSections and NewDailyLayout.
+const (
+	marginX              = 24
+	headerFontSize       = 28
+	headerY              = 20
+	headerLineHeight     = 44
+	rowFontSize          = 18
+	rowHeight            = 24
+	sectionTitleFontSize = 24
+	sectionTitleHeight   = 34
+	sectionGap           = 12
+)
+
+// leftColumnX and rightColumnX are the two side-by-side columns
+// NewDailyLayout's left/right sections render at. drawText doesn't wrap
+// or clip text to a width, so a line wider than a column will simply
+// overflow into (or past) its neighbor — an accepted limitation for this
+// first pass, not something solved here.
+const (
+	leftColumnX  = marginX
+	rightColumnX = Width/2 + marginX/2
+)
+
 // NewSections renders a main header followed by one or more sections, each
 // optionally with its own bold sub-header line. It's a generic enough
 // primitive to serve any content source that reduces to "a title plus a
@@ -136,38 +159,64 @@ func NewSections(header string, sections []Section) *GrayImage {
 	canvas := image.NewGray(image.Rect(0, 0, Width, Height))
 	draw.Draw(canvas, canvas.Bounds(), image.White, image.Point{}, draw.Src)
 
-	const (
-		marginX              = 24
-		headerFontSize       = 28
-		headerY              = 20
-		headerLineHeight     = 44
-		rowFontSize          = 18
-		rowHeight            = 24
-		sectionTitleFontSize = 24
-		sectionTitleHeight   = 34
-		sectionGap           = 12
-	)
+	y := drawHeader(canvas, header)
+	drawSections(canvas, marginX, y, sections)
 
+	return fromGray(canvas)
+}
+
+// NewDailyLayout renders the main header, then left and right as two
+// side-by-side columns (each only as tall as its own content), then
+// bottom as a single full-width region starting below whichever column
+// ends lower. Meant for the daily display's actual content (agenda |
+// shopping list, weekly menu below); NewSections/NewTextRows are kept
+// separate and unchanged since they're still used for single-column
+// content like the calendar-error fallback.
+func NewDailyLayout(header string, left, right, bottom []Section) *GrayImage {
+	canvas := image.NewGray(image.Rect(0, 0, Width, Height))
+	draw.Draw(canvas, canvas.Bounds(), image.White, image.Point{}, draw.Src)
+
+	topY := drawHeader(canvas, header)
+	leftEndY := drawSections(canvas, leftColumnX, topY, left)
+	rightEndY := drawSections(canvas, rightColumnX, topY, right)
+
+	bottomY := leftEndY
+	if rightEndY > bottomY {
+		bottomY = rightEndY
+	}
+	drawSections(canvas, marginX, bottomY+sectionGap, bottom)
+
+	return fromGray(canvas)
+}
+
+// drawHeader draws the shared main header line and returns the y
+// immediately below it, where body content should start.
+func drawHeader(canvas *image.Gray, header string) int {
 	drawText(canvas, newFace(headerFontSize), header, marginX, headerY)
+	return headerY + headerLineHeight
+}
 
+// drawSections stacks sections vertically at horizontal offset x starting
+// at y, and returns the y immediately below the last line drawn, so a
+// caller can chain another region beneath it (or beneath several, side by
+// side, as NewDailyLayout does for its bottom region).
+func drawSections(canvas *image.Gray, x, y int, sections []Section) int {
 	rowFace := newFace(rowFontSize)
 	sectionTitleFace := newBoldFace(sectionTitleFontSize)
-	y := headerY + headerLineHeight
 	for i, sec := range sections {
 		if sec.Title != "" {
 			if i > 0 {
 				y += sectionGap
 			}
-			drawText(canvas, sectionTitleFace, sec.Title, marginX, y)
+			drawText(canvas, sectionTitleFace, sec.Title, x, y)
 			y += sectionTitleHeight
 		}
 		for _, line := range sec.Lines {
-			drawText(canvas, rowFace, line, marginX, y)
+			drawText(canvas, rowFace, line, x, y)
 			y += rowHeight
 		}
 	}
-
-	return fromGray(canvas)
+	return y
 }
 
 // drawText draws s with face onto dst, with (x, y) as the top-left corner

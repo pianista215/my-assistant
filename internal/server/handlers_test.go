@@ -9,6 +9,7 @@ import (
 
 	"github.com/pianista215/my-assistant/internal/calendar"
 	"github.com/pianista215/my-assistant/internal/display"
+	"github.com/pianista215/my-assistant/internal/weeklymenu"
 )
 
 func TestHandleDisplayRequiresToken(t *testing.T) {
@@ -29,6 +30,7 @@ func TestHandleDisplayReturnsEncodedImage(t *testing.T) {
 		name            string
 		calendarFetcher CalendarFetcher
 		shoppingFetcher ShoppingListFetcher
+		menuFetcher     MenuFetcher
 	}{
 		{
 			"today's agenda",
@@ -36,21 +38,33 @@ func TestHandleDisplayReturnsEncodedImage(t *testing.T) {
 				{Summary: "Dentist", Start: time.Now(), End: time.Now().Add(30 * time.Minute)},
 			}},
 			fakeShoppingListFetcher{},
+			fakeMenuFetcher{},
 		},
-		{"empty agenda", fakeCalendarFetcher{}, fakeShoppingListFetcher{}},
-		{"calendar fetch error", fakeCalendarFetcher{err: errors.New("boom")}, fakeShoppingListFetcher{}},
+		{"empty agenda", fakeCalendarFetcher{}, fakeShoppingListFetcher{}, fakeMenuFetcher{}},
+		{"calendar fetch error", fakeCalendarFetcher{err: errors.New("boom")}, fakeShoppingListFetcher{}, fakeMenuFetcher{}},
 		{
 			"shopping list items",
 			fakeCalendarFetcher{},
 			fakeShoppingListFetcher{items: []string{"Leche", "Pan"}},
+			fakeMenuFetcher{},
 		},
-		{"empty shopping list", fakeCalendarFetcher{}, fakeShoppingListFetcher{}},
-		{"shopping list fetch error", fakeCalendarFetcher{}, fakeShoppingListFetcher{err: errors.New("boom")}},
+		{"empty shopping list", fakeCalendarFetcher{}, fakeShoppingListFetcher{}, fakeMenuFetcher{}},
+		{"shopping list fetch error", fakeCalendarFetcher{}, fakeShoppingListFetcher{err: errors.New("boom")}, fakeMenuFetcher{}},
+		{
+			"weekly menu days",
+			fakeCalendarFetcher{},
+			fakeShoppingListFetcher{},
+			fakeMenuFetcher{week: []weeklymenu.Day{
+				{Label: "Lunes", Lunch: []string{"Lentejas"}, Dinner: []string{"Tortilla"}},
+			}},
+		},
+		{"empty weekly menu", fakeCalendarFetcher{}, fakeShoppingListFetcher{}, fakeMenuFetcher{}},
+		{"weekly menu fetch error", fakeCalendarFetcher{}, fakeShoppingListFetcher{}, fakeMenuFetcher{err: errors.New("boom")}},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			srv := newTestServerWithFetchers(t, tc.calendarFetcher, tc.shoppingFetcher)
+			srv := newTestServerWithFetchers(t, tc.calendarFetcher, tc.shoppingFetcher, tc.menuFetcher)
 
 			req := httptest.NewRequest(http.MethodGet, "/api/v1/display", nil)
 			req.Header.Set("Authorization", "Bearer correct-token")

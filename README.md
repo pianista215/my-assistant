@@ -2,7 +2,7 @@
 
 A Go REST service that tells an ESP32 with an e-ink display what to show. The ESP32 polls the endpoint every hour; content will change with the time of day (and, in future iterations, will come from Google Calendar and Google Sheets). Designed to run autonomously on a VPS.
 
-**Current status**: `/api/v1/display` renders today's agenda from a single reference Google Calendar — one row per event/reminder, dropped an hour after it ends — followed by the current shopping list read from a Google Sheet.
+**Current status**: `/api/v1/display` renders today's agenda from a single reference Google Calendar — one row per event/reminder, dropped an hour after it ends — next to the current shopping list, both read from a Google Sheet, with the next few days of the weekly menu (lunch/dinner) below, read from that same sheet's second tab.
 
 ## Target hardware
 
@@ -62,6 +62,15 @@ The service reads the current shopping list from a single reference spreadsheet 
 4. Set `GOOGLE_SHEET_ID` (see `.env.example`) to the ID from the sheet's URL: `https://docs.google.com/spreadsheets/d/<GOOGLE_SHEET_ID>/edit`.
 5. **If `secrets/credentials.json` already exists from a previous Calendar-only setup, re-run `go run ./cmd/oauthsetup`** — Google requires re-consent whenever the requested scope set changes, so the existing refresh token won't grant Sheets access on its own.
 
+The **second tab** of that same spreadsheet holds the weekly menu, with a fixed layout the service assumes (rather than asking you to name the tab — it's found by position, the second one, whatever it's called):
+
+- Row 1: one column per day of the week, Monday-first (A=Monday, B=Tuesday, ... G=Sunday). The text you put in each header cell is used verbatim as that day's display label — write it in whatever language/format you like.
+- Rows 2–6: up to 5 lunch ("comida") entries for that day, one per row.
+- Row 7: left blank (a spacer, never read).
+- Rows 8–12: up to 5 dinner ("cena") entries for that day, one per row.
+
+Blank cells and rows are skipped silently, so a day doesn't need all 5 lunch/dinner rows filled in.
+
 ## Running the server
 
 ```bash
@@ -94,7 +103,7 @@ curl -H "Authorization: Bearer $AUTH_TOKEN" http://localhost:8080/api/v1/display
 - No token or wrong token → `401 Unauthorized`.
 - Correct token → `200 OK`, `Content-Type: application/octet-stream`, body = image in the binary format described above.
 
-The image shows today's agenda: a header with the date, then one row per event/reminder, each dropped from the list an hour after it ends (so only what's upcoming, ongoing, or just finished stays visible). A reminder (a calendar item with no real duration) shows just its start time; a regular event shows start-end; an all-day item is marked "All day". Below the agenda, one row per item currently on the shopping list. If the calendar can't be fetched, the endpoint still returns `200` with a rendered error message instead of the agenda, so a broken integration is visible on the panel itself; if only the shopping list can't be fetched, the agenda stays visible and just that section shows an error line instead.
+The image shows a header with the date, then today's agenda in a left column (one row per event/reminder, each dropped from the list an hour after it ends, so only what's upcoming, ongoing, or just finished stays visible — a reminder shows just its start time, a regular event shows start-end, an all-day item is marked "All day") next to the current shopping list in a right column. Below both, a "Menú semanal" section shows the next few days' planned lunch/dinner, starting from today. If the calendar can't be fetched, the endpoint still returns `200` with a rendered error message instead of the whole layout, so a broken integration is visible on the panel itself; if only the shopping list or the weekly menu can't be fetched, the rest of the display stays visible and just that section shows an error line instead.
 
 ## Visualization tool (`cmd/preview`)
 
@@ -155,13 +164,23 @@ go run ./cmd/sheetscheck
 
 Requires the same env vars as the server (`GOOGLE_CREDENTIALS_FILE`, `GOOGLE_SHEET_ID`).
 
+## Diagnostic tool (`cmd/menucheck`)
+
+Dumps the raw values read from the weekly-menu spreadsheet's second tab as JSON (plus which tab title was picked, since the tab is found by position rather than by name), straight from the Google Sheets API, bypassing the app's own column-extraction/rotation parsing.
+
+```bash
+go run ./cmd/menucheck
+```
+
+Requires the same env vars as the server (`GOOGLE_CREDENTIALS_FILE`, `GOOGLE_SHEET_ID`).
+
 ## Tests
 
 ```bash
 go test ./...
 ```
 
-Covers: token validation (auth middleware), round-trip encoding/decoding of the custom binary format, the endpoint handler via `httptest` (including calendar and shopping list fetch success/failure, using fake fetchers — no real network calls), config validation, calendar event classification (reminder vs. event vs. all-day, and the "hide an hour after it ends" rule), and shopping-list row parsing (blank/whitespace/non-string rows dropped).
+Covers: token validation (auth middleware), round-trip encoding/decoding of the custom binary format, the endpoint handler via `httptest` (including calendar, shopping list, and weekly menu fetch success/failure, using fake fetchers — no real network calls), config validation, calendar event classification (reminder vs. event vs. all-day, and the "hide an hour after it ends" rule), shopping-list row parsing (blank/whitespace/non-string rows dropped), and weekly-menu column parsing/rotation (blank rows dropped, days rotated to start at a given weekday and wrap around the week).
 
 ## Project structure
 
@@ -172,16 +191,18 @@ cmd/
   oauthsetup/    # one-time tool: OAuth desktop client JSON -> long-lived credentials file
   calendarcheck/ # dumps today's raw Calendar API events as JSON, for debugging
   sheetscheck/   # dumps the raw shopping-list sheet values as JSON, for debugging
+  menucheck/     # dumps the raw weekly-menu sheet values as JSON, for debugging
 internal/
   config/       # configuration loading (token, port, Google credentials, calendar/sheet IDs, timezone) from environment/.env
   calendar/     # Google Calendar client + today's agenda as a list of Row
   shoppinglist/ # Google Sheets client + the current shopping list as a list of items
+  weeklymenu/   # Google Sheets client + the week's planned menu as a rotated list of Day
   display/      # image generation + custom binary format codec
   server/       # router, auth middleware, and HTTP handlers
 ```
 
 ## Roadmap
 
-- Time-of-day variation logic: what's shown and in what format depending on the time.
+- Time-of-day variation logic: what's shown and in what format depending on the time (including revisiting the weekly menu's 3-day cap and layout once other phases are in place).
 - ESP32 firmware that polls this endpoint hourly and paints the received buffer on the e-ink panel.
 - VPS deployment (systemd, real environment variables).
