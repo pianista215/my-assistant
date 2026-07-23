@@ -54,13 +54,14 @@ No calendar sharing step is needed: since this authorizes your own Google accoun
 
 ### Google Sheets setup
 
-The service reads the current shopping list from a single reference spreadsheet — its first tab, one product per row starting at row 2 (row 1 is a header for your own use, e.g. "Producto"; it's never read). Reuses the same OAuth credentials file as Calendar:
+The service reads the current shopping list from a single reference spreadsheet — its first tab, one product per row starting at row 2 (row 1 is a header for your own use, e.g. "Producto"; it's never read). Reuses the same OAuth credentials file as Calendar, scoped to **only this one spreadsheet** (`drive.file`, not account-wide `spreadsheets.readonly`) via a one-time Google Picker selection:
 
-1. In the same [Google Cloud Console](https://console.cloud.google.com/) project, enable the **Google Sheets API**.
-2. On the **OAuth consent screen**, add the `.../auth/spreadsheets.readonly` scope alongside the existing calendar one.
-3. Create the spreadsheet (or reuse one you already have), with a header in row 1 and products starting at row 2 of the first tab.
-4. Set `GOOGLE_SHEET_ID` (see `.env.example`) to the ID from the sheet's URL: `https://docs.google.com/spreadsheets/d/<GOOGLE_SHEET_ID>/edit`.
-5. **If `secrets/credentials.json` already exists from a previous Calendar-only setup, re-run `go run ./cmd/oauthsetup`** — Google requires re-consent whenever the requested scope set changes, so the existing refresh token won't grant Sheets access on its own.
+1. In the same [Google Cloud Console](https://console.cloud.google.com/) project, enable the **Google Picker API** (`APIs & Services → Library`).
+2. **APIs & Services → Credentials → Create credentials → API key.** Restrict it to the Picker API (no HTTP referrer restriction needed — it's only ever used from a page served on `localhost` during setup, never a public site). Set `GOOGLE_PICKER_API_KEY` to it (see `.env.example`) — this is only ever read by `cmd/oauthsetup`, never by the server at runtime.
+3. On the **OAuth consent screen**, add the `.../auth/drive.file` scope alongside the existing calendar one.
+4. Create the spreadsheet (or reuse one you already have), with a header in row 1 and products starting at row 2 of the first tab.
+5. Run (or **re-run**, if `secrets/credentials.json` already exists from a Calendar-only setup — Google requires re-consent whenever the requested scope set changes) `go run ./cmd/oauthsetup`. After signing in, a browser tab opens the Google Picker widget — pick this spreadsheet there; that selection *is* what grants the app access to it. The tool then prints the picked file's ID and name.
+6. Set `GOOGLE_SHEET_ID` (see `.env.example`) to that printed ID — it should match the ID in the sheet's URL (`https://docs.google.com/spreadsheets/d/<GOOGLE_SHEET_ID>/edit`) since it's the same file; the print is just a confirmation.
 
 The **second tab** of that same spreadsheet holds the weekly menu, with a fixed layout the service assumes (rather than asking you to name the tab — it's found by position, the second one, whatever it's called):
 
@@ -82,11 +83,11 @@ Listens on `:8080` by default (configurable via `PORT`). Fails immediately at st
 **First-time setup, end to end:**
 
 ```bash
-cp .env.example .env               # then edit it: AUTH_TOKEN, TZ
-go run ./cmd/oauthsetup             # one-time OAuth login; prints calendar IDs
+cp .env.example .env               # then edit it: AUTH_TOKEN, TZ, GOOGLE_PICKER_API_KEY (see "Google Sheets setup")
+go run ./cmd/oauthsetup             # one-time OAuth login + spreadsheet picker; prints calendar IDs + picked spreadsheet ID
 # edit .env: set GOOGLE_CREDENTIALS_FILE=secrets/credentials.json
 # edit .env: set CALENDAR_ID to one of the printed IDs
-# edit .env: set GOOGLE_SHEET_ID to your shopping-list spreadsheet's ID
+# edit .env: set GOOGLE_SHEET_ID to the printed spreadsheet ID
 go run ./cmd/server
 ```
 
@@ -137,7 +138,7 @@ Renders the image using Unicode block characters and ANSI grayscale colors (232-
 
 ## OAuth setup tool (`cmd/oauthsetup`)
 
-Turns the OAuth desktop client downloaded from Google Cloud Console into the long-lived `authorized_user` credentials file described in [Google Calendar setup](#google-calendar-setup) above, then prints the calendars the authorized account can see (name + ID) so you know what to set `CALENDAR_ID` to. Run once per Google account:
+Turns the OAuth desktop client downloaded from Google Cloud Console into the long-lived `authorized_user` credentials file described in [Google Calendar setup](#google-calendar-setup) above. After signing in, it opens a Google Picker widget (served locally, restricted to spreadsheets, authorized with `GOOGLE_PICKER_API_KEY` from `.env`) so you can authorize exactly one reference spreadsheet — `drive.file` scope grants access only to whatever gets picked there, not every spreadsheet in the account. Then it prints the calendars the authorized account can see (name + ID, for `CALENDAR_ID`) and the picked spreadsheet's ID + name (for `GOOGLE_SHEET_ID`). Run once per Google account:
 
 ```bash
 go run ./cmd/oauthsetup

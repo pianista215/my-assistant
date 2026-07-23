@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"time"
 
+	"google.golang.org/api/drive/v3"
 	"google.golang.org/api/option"
 	"google.golang.org/api/sheets/v4"
 )
@@ -25,11 +26,14 @@ type Client struct {
 // NewClient builds a Client authenticated with the credentials stored at
 // credentialsFile (same authorized_user file used by internal/calendar
 // and internal/shoppinglist), reading the menu from spreadsheetID and
-// determining "today" (for rotating the week) in loc.
+// determining "today" (for rotating the week) in loc. The credentials are
+// scoped to drive.file — per-file access to whichever spreadsheet was
+// picked during cmd/oauthsetup, not account-wide — so spreadsheetID must
+// be that same file.
 func NewClient(ctx context.Context, credentialsFile, spreadsheetID string, loc *time.Location) (*Client, error) {
 	svc, err := sheets.NewService(ctx,
 		option.WithCredentialsFile(credentialsFile),
-		option.WithScopes(sheets.SpreadsheetsReadonlyScope),
+		option.WithScopes(drive.DriveFileScope),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("weeklymenu: creating client: %w", err)
