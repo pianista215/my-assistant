@@ -1,0 +1,52 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Select the reference spreadsheet</title>
+</head>
+<body>
+<p id="status">Loading Google Picker…</p>
+<script src="https://apis.google.com/js/api.js"></script>
+<script>
+function report(body) {
+  fetch('/picker-callback', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(body)
+  });
+}
+
+function pickerCallback(data) {
+  if (data.action === google.picker.Action.PICKED) {
+    var doc = data.docs[0];
+    report({id: doc.id, name: doc.name});
+    document.getElementById('status').textContent =
+      'Picked "' + doc.name + '" — you can close this tab.';
+  } else if (data.action === google.picker.Action.CANCEL) {
+    report({cancelled: true});
+    document.getElementById('status').textContent =
+      'Selection cancelled — you can close this tab and re-run the tool.';
+  }
+}
+
+function loadPicker() {
+  gapi.load('picker', function() {
+    var view = new google.picker.DocsView(google.picker.ViewId.SPREADSHEETS)
+      .setMimeTypes('application/vnd.google-apps.spreadsheet');
+    var picker = new google.picker.PickerBuilder()
+      .addView(view)
+      .setOAuthToken('{{.AccessToken}}')
+      .setDeveloperKey('{{.APIKey}}')
+      .setAppId('{{.AppID}}')
+      .setOrigin('{{.Origin}}')
+      .setCallback(pickerCallback)
+      .build();
+    picker.setVisible(true);
+    document.getElementById('status').textContent = 'Pick the reference spreadsheet…';
+  });
+}
+
+window.onload = loadPicker;
+</script>
+</body>
+</html>
