@@ -25,6 +25,35 @@ func TestHandleDisplayRequiresToken(t *testing.T) {
 	}
 }
 
+func TestHandleDisplayRequiresValidBattery(t *testing.T) {
+	cases := []struct {
+		name  string
+		query string
+	}{
+		{"missing", ""},
+		{"non numeric", "?battery=abc"},
+		{"zero", "?battery=0"},
+		{"over 100", "?battery=101"},
+		{"negative", "?battery=-5"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := newTestServer(t)
+
+			req := httptest.NewRequest(http.MethodGet, "/api/v1/display"+tc.query, nil)
+			req.Header.Set("Authorization", "Bearer correct-token")
+			rec := httptest.NewRecorder()
+
+			srv.ServeHTTP(rec, req)
+
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, want %d", rec.Code, http.StatusBadRequest)
+			}
+		})
+	}
+}
+
 func TestHandleDisplayReturnsEncodedImage(t *testing.T) {
 	cases := []struct {
 		name            string
@@ -66,7 +95,7 @@ func TestHandleDisplayReturnsEncodedImage(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			srv := newTestServerWithFetchers(t, tc.calendarFetcher, tc.shoppingFetcher, tc.menuFetcher)
 
-			req := httptest.NewRequest(http.MethodGet, "/api/v1/display", nil)
+			req := httptest.NewRequest(http.MethodGet, "/api/v1/display?battery=87", nil)
 			req.Header.Set("Authorization", "Bearer correct-token")
 			rec := httptest.NewRecorder()
 

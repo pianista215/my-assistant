@@ -95,16 +95,17 @@ go run ./cmd/server
 
 `GET /api/v1/display`
 
-Requires an `Authorization: Bearer <AUTH_TOKEN>` header. The same token must be set in the ESP32 firmware.
+Requires an `Authorization: Bearer <AUTH_TOKEN>` header. The same token must be set in the ESP32 firmware. Also requires a `battery` query parameter — the device's battery percentage, 1-100 — since the ESP32 reports its own battery level on every poll.
 
 ```bash
-curl -H "Authorization: Bearer $AUTH_TOKEN" http://localhost:8080/api/v1/display -o buffer.bin
+curl -H "Authorization: Bearer $AUTH_TOKEN" "http://localhost:8080/api/v1/display?battery=87" -o buffer.bin
 ```
 
 - No token or wrong token → `401 Unauthorized`.
-- Correct token → `200 OK`, `Content-Type: application/octet-stream`, body = image in the binary format described above.
+- Missing, non-numeric, or out-of-range (must be 1-100) `battery` query parameter → `400 Bad Request`.
+- Correct token and valid battery → `200 OK`, `Content-Type: application/octet-stream`, body = image in the binary format described above.
 
-The image shows a header with the date, then today's agenda in a left column (one row per event/reminder, each dropped from the list an hour after it ends, so only what's upcoming, ongoing, or just finished stays visible — a reminder shows just its start time, a regular event shows start-end, an all-day item is marked "All day") next to the current shopping list in a right column. Below both, a "Menú semanal" section shows the next few days' planned lunch/dinner, starting from today. If the calendar can't be fetched, the endpoint still returns `200` with a rendered error message instead of the whole layout, so a broken integration is visible on the panel itself; if only the shopping list or the weekly menu can't be fetched, the rest of the display stays visible and just that section shows an error line instead.
+The image shows a header with the date, then today's agenda ("Eventos") in a left column (one row per event/reminder, each dropped from the list an hour after it ends, so only what's upcoming, ongoing, or just finished stays visible — a reminder shows just its start time, a regular event shows start-end, an all-day item is marked "All day") next to the current shopping list ("Lista de la compra") in a right column. Below both, a "Menú semanal" section shows the next few days' planned lunch/dinner, starting from today. A small footer in the bottom-right corner shows the image's generation time and the reported battery percentage (e.g. `15:04:05 - 87%`). If the calendar can't be fetched, the endpoint still returns `200` with a rendered error message instead of the whole layout, so a broken integration is visible on the panel itself; if only the shopping list or the weekly menu can't be fetched, the rest of the display stays visible and just that section shows an error line instead.
 
 ## Visualization tool (`cmd/preview`)
 
@@ -114,7 +115,7 @@ Since no standard image format is used, `cmd/preview` lets you inspect what's be
 
 ```bash
 # generate a PNG and open it with the system's default viewer/browser
-go run ./cmd/preview --url http://localhost:8080/api/v1/display --token "$AUTH_TOKEN" --open
+go run ./cmd/preview --url http://localhost:8080/api/v1/display --token "$AUTH_TOKEN" --battery 87 --open
 
 # or against an already downloaded buffer
 go run ./cmd/preview --file buffer.bin --open
@@ -122,6 +123,8 @@ go run ./cmd/preview --file buffer.bin --open
 # --png saves to a specific path instead of a temp file
 go run ./cmd/preview --file buffer.bin --png output.png
 ```
+
+`--battery` (default `100`) is only meaningful in `--url` mode — it's sent as the endpoint's required `battery` query parameter, so you can e.g. pass `--battery 5` to see how a low-battery footer reads.
 
 `--open` uses `xdg-open` (Linux), `open` (macOS), or `start` (Windows) to open the PNG with the default application.
 
@@ -181,7 +184,7 @@ Requires the same env vars as the server (`GOOGLE_CREDENTIALS_FILE`, `GOOGLE_SHE
 go test ./...
 ```
 
-Covers: token validation (auth middleware), round-trip encoding/decoding of the custom binary format, the endpoint handler via `httptest` (including calendar, shopping list, and weekly menu fetch success/failure, using fake fetchers — no real network calls), config validation, calendar event classification (reminder vs. event vs. all-day, and the "hide an hour after it ends" rule), shopping-list row parsing (blank/whitespace/non-string rows dropped), and weekly-menu column parsing/rotation (blank rows dropped, days rotated to start at a given weekday and wrap around the week).
+Covers: token and battery-parameter validation, round-trip encoding/decoding of the custom binary format, the endpoint handler via `httptest` (including calendar, shopping list, and weekly menu fetch success/failure, using fake fetchers — no real network calls), config validation, calendar event classification (reminder vs. event vs. all-day, and the "hide an hour after it ends" rule), shopping-list row parsing (blank/whitespace/non-string rows dropped), weekly-menu column parsing/rotation (blank rows dropped, days rotated to start at a given weekday and wrap around the week), and the bottom-right footer's right-alignment.
 
 ## Project structure
 
