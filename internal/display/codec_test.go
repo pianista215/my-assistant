@@ -120,3 +120,52 @@ func TestNewTextRowsProducesPanelSizedImage(t *testing.T) {
 		})
 	}
 }
+
+func TestNewDailyLayoutProducesPanelSizedImage(t *testing.T) {
+	cases := []struct {
+		name   string
+		header string
+		left   []Section
+		right  []Section
+		bottom []Section
+	}{
+		{
+			"agenda, shopping list and menu",
+			"Wednesday, 22 July 2026",
+			[]Section{{Lines: []string{"09:00  Dentist", "10:00-11:00  Standup"}}},
+			[]Section{{Title: "Lista de la compra", Lines: []string{"Leche", "Pan"}}},
+			[]Section{
+				{Title: "Miércoles", Lines: []string{"Comida: Lentejas", "Cena: Tortilla"}},
+				{Title: "Jueves", Lines: []string{"Comida: Pasta", "Cena: (sin planificar)"}},
+			},
+		},
+		{
+			"all sections empty",
+			"Wednesday, 22 July 2026",
+			nil,
+			nil,
+			nil,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			img := NewDailyLayout(tc.header, tc.left, tc.right, tc.bottom)
+
+			if img.Width != Width || img.Height != Height {
+				t.Fatalf("dimensions = %dx%d, want %dx%d", img.Width, img.Height, Width, Height)
+			}
+
+			var sawNonWhite bool
+			for _, level := range img.Pixels {
+				if level != White {
+					sawNonWhite = true
+					break
+				}
+			}
+			if !sawNonWhite {
+				t.Fatal("expected the rendered text to produce at least one non-white pixel")
+			}
+		})
+	}
+}

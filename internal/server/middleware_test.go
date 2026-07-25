@@ -9,6 +9,7 @@ import (
 
 	"github.com/pianista215/my-assistant/internal/calendar"
 	"github.com/pianista215/my-assistant/internal/config"
+	"github.com/pianista215/my-assistant/internal/weeklymenu"
 )
 
 // fakeCalendarFetcher lets tests control what handleDisplay sees without
@@ -33,15 +34,26 @@ func (f fakeShoppingListFetcher) FetchItems(ctx context.Context) ([]string, erro
 	return f.items, f.err
 }
 
-func newTestServer(t *testing.T) *Server {
-	t.Helper()
-	return newTestServerWithFetchers(t, fakeCalendarFetcher{}, fakeShoppingListFetcher{})
+// fakeMenuFetcher lets tests control what handleDisplay sees without
+// making a real Google Sheets API call.
+type fakeMenuFetcher struct {
+	week []weeklymenu.Day
+	err  error
 }
 
-func newTestServerWithFetchers(t *testing.T, calendarFetcher CalendarFetcher, shoppingListFetcher ShoppingListFetcher) *Server {
+func (f fakeMenuFetcher) FetchWeek(ctx context.Context) ([]weeklymenu.Day, error) {
+	return f.week, f.err
+}
+
+func newTestServer(t *testing.T) *Server {
+	t.Helper()
+	return newTestServerWithFetchers(t, fakeCalendarFetcher{}, fakeShoppingListFetcher{}, fakeMenuFetcher{})
+}
+
+func newTestServerWithFetchers(t *testing.T, calendarFetcher CalendarFetcher, shoppingListFetcher ShoppingListFetcher, menuFetcher MenuFetcher) *Server {
 	t.Helper()
 	cfg := &config.Config{AuthToken: "correct-token", Port: "0", Location: time.UTC}
-	return New(cfg, calendarFetcher, shoppingListFetcher)
+	return New(cfg, calendarFetcher, shoppingListFetcher, menuFetcher)
 }
 
 func TestRequireAuth(t *testing.T) {
