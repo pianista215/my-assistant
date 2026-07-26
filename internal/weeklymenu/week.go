@@ -51,11 +51,48 @@ func FetchWeek(ctx context.Context, svc *sheets.Service, spreadsheetID string, t
 	return parseWeek(resp.Values, today), nil
 }
 
+// ClearDay blanks the given day's "comida"/"cena" entries (rows 2-12 of
+// its column) in the sheet, so the user has to fill them in again before
+// that weekday comes back around next week. Mirrors FetchWeek's two-step
+// shape: discover the second tab's title by position, then act on it.
+func ClearDay(ctx context.Context, svc *sheets.Service, spreadsheetID string, day time.Weekday) error {
+	meta, err := svc.Spreadsheets.Get(spreadsheetID).Fields("sheets.properties.title").Context(ctx).Do()
+	if err != nil {
+		return fmt.Errorf("weeklymenu: reading spreadsheet metadata: %w", err)
+	}
+	if len(meta.Sheets) < 2 {
+		return fmt.Errorf("weeklymenu: spreadsheet has fewer than 2 tabs")
+	}
+
+	rng := menuColumnRange(meta.Sheets[1].Properties.Title, day)
+	if _, err := svc.Spreadsheets.Values.Clear(spreadsheetID, rng, &sheets.ClearValuesRequest{}).Context(ctx).Do(); err != nil {
+		return fmt.Errorf("weeklymenu: clearing day: %w", err)
+	}
+	return nil
+}
+
 // menuRange builds the A1-notation range for the given tab title, quoted
 // (required for any tab name with spaces or punctuation) with embedded
 // single quotes doubled, as Sheets' quoting rules require.
 func menuRange(tabTitle string) string {
-	return "'" + strings.ReplaceAll(tabTitle, "'", "''") + "'!A1:G12"
+	return quotedTab(tabTitle) + "!A1:G12"
+}
+
+// menuColumnRange builds the A1-notation range covering one weekday's
+// entire column (rows 2-12: lunch, the blank spacer, and dinner — clearing
+// the spacer too is harmless since it's never read). Reuses parseWeek's
+// Sunday=0..Saturday=6 -> Monday=0..Sunday=6 shift to pick the column, then
+// converts it to a letter; a single letter always suffices since the sheet
+// only ever has 7 day columns (A-G).
+func menuColumnRange(tabTitle string, day time.Weekday) string {
+	col := string(rune('A' + (int(day)+6)%7))
+	return fmt.Sprintf("%s!%s2:%s12", quotedTab(tabTitle), col, col)
+}
+
+// quotedTab quotes a tab title for use in A1 notation, doubling any
+// embedded single quotes as Sheets' quoting rules require.
+func quotedTab(tabTitle string) string {
+	return "'" + strings.ReplaceAll(tabTitle, "'", "''") + "'"
 }
 
 // parseWeek extracts each weekday's column from the raw grid, then

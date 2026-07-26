@@ -51,3 +51,8 @@ func (c *Client) FetchWeek(ctx context.Context) ([]Day, error) {
 func (c *Client) FetchWeekFrom(ctx context.Context, day time.Time) ([]Day, error) {
 	return FetchWeek(ctx, c.svc, c.spreadsheetID, day.Weekday())
 }
+
+// ClearDay blanks day's planned lunch/dinner entries in the sheet.
+func (c *Client) ClearDay(ctx context.Context, day time.Weekday) error {
+	return ClearDay(ctx, c.svc, c.spreadsheetID, day)
+}
