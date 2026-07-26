@@ -78,7 +78,7 @@ Blank cells and rows are skipped silently, so a day doesn't need all 5 lunch/din
 go run ./cmd/server
 ```
 
-Listens on `:8080` by default (configurable via `PORT`). Fails immediately at startup (before serving anything) if `AUTH_TOKEN`, `GOOGLE_CREDENTIALS_FILE`, `CALENDAR_ID`, `GOOGLE_SHEET_ID`, or `TZ` is missing or invalid — see [Configuration](#configuration), [Google Calendar setup](#google-calendar-setup), and [Google Sheets setup](#google-sheets-setup) above to get all five in place first.
+Listens on `:8080` by default (configurable via `PORT`). Fails immediately at startup (before serving anything) if `AUTH_TOKEN`, `GOOGLE_CREDENTIALS_FILE`, `CALENDAR_ID`, `GOOGLE_SHEET_ID`, `TZ`, `WEATHER_LATITUDE`, or `WEATHER_LONGITUDE` is missing or invalid — see [Configuration](#configuration), [Google Calendar setup](#google-calendar-setup), and [Google Sheets setup](#google-sheets-setup) above to get them all in place first. `WEATHER_LATITUDE`/`WEATHER_LONGITUDE` need no setup step of their own — just the coordinates of whatever fixed location you want the weather panel's forecast for (see `.env.example`).
 
 **First-time setup, end to end:**
 

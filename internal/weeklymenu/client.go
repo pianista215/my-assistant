@@ -45,3 +45,9 @@ func NewClient(ctx context.Context, credentialsFile, spreadsheetID string, loc *
 func (c *Client) FetchWeek(ctx context.Context) ([]Day, error) {
 	return FetchWeek(ctx, c.svc, c.spreadsheetID, time.Now().In(c.loc).Weekday())
 }
+
+// FetchWeekFrom returns the week's days rotated to start at day's weekday,
+// instead of today's.
+func (c *Client) FetchWeekFrom(ctx context.Context, day time.Time) ([]Day, error) {
+	return FetchWeek(ctx, c.svc, c.spreadsheetID, day.Weekday())
+}

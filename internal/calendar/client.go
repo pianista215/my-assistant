@@ -37,3 +37,13 @@ func NewClient(ctx context.Context, credentialsFile, calendarID string, loc *tim
 func (c *Client) FetchToday(ctx context.Context) ([]Row, error) {
 	return FetchToday(ctx, c.svc, c.calendarID, c.loc, time.Now().In(c.loc))
 }
+
+// FetchForDay returns day's agenda rows, using day itself (rather than
+// time.Now()) as the reference "now" for both the day-window computation
+// and isVisible's past-event filtering. For a future day this makes the
+// filtering a harmless no-op — every row's End is necessarily still ahead
+// of day — which is fine, since there's no "past" to hide yet on a day
+// that hasn't happened.
+func (c *Client) FetchForDay(ctx context.Context, day time.Time) ([]Row, error) {
+	return FetchToday(ctx, c.svc, c.calendarID, c.loc, day)
+}

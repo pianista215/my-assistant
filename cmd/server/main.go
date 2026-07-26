@@ -10,6 +10,7 @@ import (
 	"github.com/pianista215/my-assistant/internal/config"
 	"github.com/pianista215/my-assistant/internal/server"
 	"github.com/pianista215/my-assistant/internal/shoppinglist"
+	"github.com/pianista215/my-assistant/internal/weather"
 	"github.com/pianista215/my-assistant/internal/weeklymenu"
 )
 
@@ -34,7 +35,9 @@ func main() {
 		log.Fatalf("weeklymenu: %v", err)
 	}
 
-	srv := server.New(cfg, calClient, shoppingListClient, menuClient)
+	weatherClient := weather.NewClient(cfg.WeatherLatitude, cfg.WeatherLongitude, cfg.Location)
+
+	srv := server.New(cfg, calClient, shoppingListClient, menuClient, weatherClient)
 
 	addr := ":" + cfg.Port
 	log.Printf("listening on %s", addr)
