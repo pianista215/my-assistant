@@ -1,8 +1,10 @@
 package server
 
 import (
+	"fmt"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -12,14 +14,14 @@ import (
 )
 
 // DefaultVisibleDays caps how many of the rotated week's days actually
-// render below the agenda/shopping list columns. Deliberately far below
-// the full week (7): with up to 5 lunch + 5 dinner entries per day, 7
-// days doesn't fit legibly in the space left below the top columns. This
-// is a first pass to validate the integration end-to-end; expected to
-// grow once the layout is fine-tuned by time-of-day in a later iteration
-// — kept as one constant specifically so that revision is a one-line
-// change.
-const DefaultVisibleDays = 3
+// render below the agenda/shopping list columns — today plus the next
+// day. Deliberately far below the full week (7): with up to 5 lunch + 5
+// dinner entries per day, 7 days doesn't fit legibly in the space left
+// below the top columns. This is a first pass to validate the integration
+// end-to-end; expected to grow once the layout is fine-tuned by
+// time-of-day in a later iteration — kept as one constant specifically so
+// that revision is a one-line change.
+const DefaultVisibleDays = 2
 
 // handleDisplay serves the image the ESP32 should render: today's agenda
 // from the reference calendar in a left column, the current shopping
@@ -33,11 +35,19 @@ const DefaultVisibleDays = 3
 func (s *Server) handleDisplay(w http.ResponseWriter, r *http.Request) {
 	now := time.Now().In(s.cfg.Location)
 
+	battery, err := parseBatteryPercent(r.URL.Query().Get("battery"))
+	if err != nil {
+		log.Printf("server: %v", err)
+		http.Error(w, "invalid battery", http.StatusBadRequest)
+		return
+	}
+	footer := fmt.Sprintf("%s - %d%%", now.Format("15:04:05"), battery)
+
 	var img *display.GrayImage
 	rows, err := s.calendar.FetchToday(r.Context())
 	if err != nil {
 		log.Printf("server: fetching calendar: %v", err)
-		img = display.NewTextRows("Could not load calendar", []string{
+		img = display.NewTextRows("Could not load calendar", footer, []string{
 			now.Format("2006-01-02 15:04:05"),
 			err.Error(),
 		})
@@ -50,9 +60,9 @@ func (s *Server) handleDisplay(w http.ResponseWriter, r *http.Request) {
 		if menuErr != nil {
 			log.Printf("server: fetching weekly menu: %v", menuErr)
 		}
-		img = display.NewDailyLayout(now.Format("Monday, 2 January 2006"),
-			[]display.Section{{Lines: agendaLines(rows)}},
-			[]display.Section{{Title: "Lista de la compra", Lines: shoppingListLines(items, listErr)}},
+		img = display.NewDailyLayout(spanishHeaderDate(now), footer,
+			[]display.Section{{Title: "Eventos", Lines: agendaLines(rows)}},
+			[]display.Section{{Title: "Lista de la compra", Lines: shoppingListLines(items, listErr), Bulleted: true}},
 			menuSections(days, menuErr),
 		)
 	}
@@ -66,6 +76,44 @@ func (s *Server) handleDisplay(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Write(data)
+}
+
+// spanishWeekdays and spanishMonths translate time.Time's English-only
+// Weekday()/Month() names, since the standard library has no locale
+// support of its own — every other date the app deals with is either a
+// fixed layout (agenda timestamps) or verbatim from the spreadsheet
+// (weeklymenu.Day.Label), but the header is built from Go's time.Time
+// here, so it needs an explicit translation.
+var spanishWeekdays = [...]string{"domingo", "lunes", "martes", "miércoles", "jueves", "viernes", "sábado"}
+
+var spanishMonths = [...]string{"enero", "febrero", "marzo", "abril", "mayo", "junio",
+	"julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"}
+
+// spanishHeaderDate formats now as e.g. "Sábado, 25 de julio de 2026", the
+// main header shown above the agenda/shopping-list columns.
+func spanishHeaderDate(now time.Time) string {
+	weekday := spanishWeekdays[now.Weekday()]
+	weekday = strings.ToUpper(weekday[:1]) + weekday[1:]
+	month := spanishMonths[now.Month()-1]
+	return fmt.Sprintf("%s, %d de %s de %d", weekday, now.Day(), month, now.Year())
+}
+
+// parseBatteryPercent parses the ESP32's battery level from the "battery"
+// query parameter, required on every request and range-checked as the
+// device itself would report it: 1-100 (0 would mean it's already dead
+// and couldn't have made the request).
+func parseBatteryPercent(raw string) (int, error) {
+	if raw == "" {
+		return 0, fmt.Errorf("server: battery query parameter is required")
+	}
+	battery, err := strconv.Atoi(raw)
+	if err != nil {
+		return 0, fmt.Errorf("server: invalid battery %q: %w", raw, err)
+	}
+	if battery < 1 || battery > 100 {
+		return 0, fmt.Errorf("server: battery %d out of range 1-100", battery)
+	}
+	return battery, nil
 }
 
 func agendaLines(rows []calendar.Row) []string {

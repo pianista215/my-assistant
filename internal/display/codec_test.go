@@ -1,6 +1,8 @@
 package display
 
 import (
+	"image"
+	"image/draw"
 	"testing"
 	"time"
 )
@@ -92,16 +94,17 @@ func TestNewTextRowsProducesPanelSizedImage(t *testing.T) {
 	cases := []struct {
 		name   string
 		header string
+		footer string
 		rows   []string
 	}{
-		{"multiple rows", "Monday, 19 July 2026", []string{"09:00  Dentist", "10:00-11:00  Standup"}},
-		{"no rows", "Monday, 19 July 2026", []string{"No events today"}},
-		{"error message", "Could not load calendar", []string{"2026-07-19 15:04:05", "boom"}},
+		{"multiple rows", "Monday, 19 July 2026", "15:04:05 - 87%", []string{"09:00  Dentist", "10:00-11:00  Standup"}},
+		{"no rows", "Monday, 19 July 2026", "15:04:05 - 87%", []string{"No events today"}},
+		{"error message", "Could not load calendar", "15:04:05 - 87%", []string{"2026-07-19 15:04:05", "boom"}},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			img := NewTextRows(tc.header, tc.rows)
+			img := NewTextRows(tc.header, tc.footer, tc.rows)
 
 			if img.Width != Width || img.Height != Height {
 				t.Fatalf("dimensions = %dx%d, want %dx%d", img.Width, img.Height, Width, Height)
@@ -125,6 +128,7 @@ func TestNewDailyLayoutProducesPanelSizedImage(t *testing.T) {
 	cases := []struct {
 		name   string
 		header string
+		footer string
 		left   []Section
 		right  []Section
 		bottom []Section
@@ -132,7 +136,8 @@ func TestNewDailyLayoutProducesPanelSizedImage(t *testing.T) {
 		{
 			"agenda, shopping list and menu",
 			"Wednesday, 22 July 2026",
-			[]Section{{Lines: []string{"09:00  Dentist", "10:00-11:00  Standup"}}},
+			"15:04:05 - 87%",
+			[]Section{{Title: "Eventos", Lines: []string{"09:00  Dentist", "10:00-11:00  Standup"}}},
 			[]Section{{Title: "Lista de la compra", Lines: []string{"Leche", "Pan"}}},
 			[]Section{
 				{Title: "Miércoles", Lines: []string{"Comida: Lentejas", "Cena: Tortilla"}},
@@ -142,6 +147,7 @@ func TestNewDailyLayoutProducesPanelSizedImage(t *testing.T) {
 		{
 			"all sections empty",
 			"Wednesday, 22 July 2026",
+			"15:04:05 - 87%",
 			nil,
 			nil,
 			nil,
@@ -150,7 +156,7 @@ func TestNewDailyLayoutProducesPanelSizedImage(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			img := NewDailyLayout(tc.header, tc.left, tc.right, tc.bottom)
+			img := NewDailyLayout(tc.header, tc.footer, tc.left, tc.right, tc.bottom)
 
 			if img.Width != Width || img.Height != Height {
 				t.Fatalf("dimensions = %dx%d, want %dx%d", img.Width, img.Height, Width, Height)
@@ -168,4 +174,52 @@ func TestNewDailyLayoutProducesPanelSizedImage(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestDrawFooterRightAligned(t *testing.T) {
+	newBlankCanvas := func() *image.Gray {
+		canvas := image.NewGray(image.Rect(0, 0, Width, Height))
+		draw.Draw(canvas, canvas.Bounds(), image.White, image.Point{}, draw.Src)
+		return canvas
+	}
+
+	t.Run("empty footer draws nothing", func(t *testing.T) {
+		canvas := newBlankCanvas()
+		drawFooter(canvas, "")
+
+		for _, pix := range canvas.Pix {
+			if pix != 255 {
+				t.Fatal(`expected drawFooter("") to leave the canvas untouched`)
+			}
+		}
+	})
+
+	t.Run("footer text is right-aligned to the bottom-right corner", func(t *testing.T) {
+		canvas := newBlankCanvas()
+		drawFooter(canvas, "15:04:05 - 87%")
+
+		face := newFace(footerFontSize)
+		bandTop := Height - footerMarginBottom - face.Metrics().Height.Ceil()
+		bandBottom := Height - footerMarginBottom
+
+		var sawNonWhiteLeft, sawNonWhiteRight bool
+		for y := bandTop; y < bandBottom; y++ {
+			for x := 0; x < Width/2; x++ {
+				if canvas.GrayAt(x, y).Y != 255 {
+					sawNonWhiteLeft = true
+				}
+			}
+			for x := Width / 2; x < Width; x++ {
+				if canvas.GrayAt(x, y).Y != 255 {
+					sawNonWhiteRight = true
+				}
+			}
+		}
+		if sawNonWhiteLeft {
+			t.Fatal("expected no footer content in the left half of the panel")
+		}
+		if !sawNonWhiteRight {
+			t.Fatal("expected footer content in the right half of the panel")
+		}
+	})
 }

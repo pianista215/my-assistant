@@ -13,9 +13,11 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"runtime"
+	"strconv"
 
 	"github.com/pianista215/my-assistant/internal/display"
 )
@@ -35,9 +37,10 @@ func main() {
 	cols := flag.Int("cols", 120, "Output width in terminal columns (terminal mode only)")
 	pngPath := flag.String("png", "", "Save the image as a PNG at this path instead of printing to the terminal")
 	open := flag.Bool("open", false, "Save the image as a PNG and open it with the OS default viewer")
+	battery := flag.Int("battery", 100, "Battery percentage (1-100) sent as the battery query parameter (--url mode only)")
 	flag.Parse()
 
-	data, err := loadData(*url, *token, *file)
+	data, err := loadData(*url, *token, *file, *battery)
 	if err != nil {
 		log.Fatalf("preview: %v", err)
 	}
@@ -73,12 +76,20 @@ func main() {
 	}
 }
 
-func loadData(url, token, file string) ([]byte, error) {
+func loadData(rawURL, token, file string, battery int) ([]byte, error) {
 	switch {
 	case file != "":
 		return os.ReadFile(file)
-	case url != "":
-		req, err := http.NewRequest(http.MethodGet, url, nil)
+	case rawURL != "":
+		u, err := url.Parse(rawURL)
+		if err != nil {
+			return nil, err
+		}
+		q := u.Query()
+		q.Set("battery", strconv.Itoa(battery))
+		u.RawQuery = q.Encode()
+
+		req, err := http.NewRequest(http.MethodGet, u.String(), nil)
 		if err != nil {
 			return nil, err
 		}
