@@ -146,6 +146,37 @@ func TestHandleDisplayRequiresValidDemoTime(t *testing.T) {
 	}
 }
 
+func TestAgendaSectionEmptyFallsBackToPlainLines(t *testing.T) {
+	sec := agendaSection(nil)
+	if sec.Title != "Eventos" {
+		t.Errorf("Title = %q, want %q", sec.Title, "Eventos")
+	}
+	if len(sec.Events) != 0 {
+		t.Errorf("Events = %v, want empty", sec.Events)
+	}
+	if len(sec.Lines) != 1 || sec.Lines[0] != "No events today" {
+		t.Errorf("Lines = %v, want [\"No events today\"]", sec.Lines)
+	}
+}
+
+func TestAgendaSectionBuildsEventsWithSeparateTimeAndText(t *testing.T) {
+	base := time.Date(2026, 7, 26, 9, 0, 0, 0, time.UTC)
+	rows := []calendar.Row{
+		{Summary: "Dentist", Start: base, End: base.Add(30 * time.Minute)},
+	}
+
+	sec := agendaSection(rows)
+	if len(sec.Lines) != 0 {
+		t.Errorf("Lines = %v, want empty", sec.Lines)
+	}
+	if len(sec.Events) != 1 {
+		t.Fatalf("len(Events) = %d, want 1", len(sec.Events))
+	}
+	if sec.Events[0].Time != "09:00-09:30" || sec.Events[0].Text != "Dentist" {
+		t.Errorf("Events[0] = %+v, want Time=09:00-09:30 Text=Dentist", sec.Events[0])
+	}
+}
+
 func TestPhaseForBoundaries(t *testing.T) {
 	cases := []struct {
 		hour int

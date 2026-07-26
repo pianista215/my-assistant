@@ -23,18 +23,25 @@ func (r Row) IsReminder() bool {
 	return !r.AllDay && r.Start.Equal(r.End)
 }
 
-// String formats the row for display: just the start time for a
-// reminder, start-end for an event, and an "All day" marker for all-day
-// items.
-func (r Row) String() string {
+// TimeLabel formats just the time portion of the row: the start time for
+// a reminder, start-end for an event, and "All day" for an all-day item —
+// factored out of String() so callers that want to style the time and
+// summary differently (e.g. the agenda's bold time / regular summary)
+// don't have to re-parse String()'s combined output.
+func (r Row) TimeLabel() string {
 	switch {
 	case r.AllDay:
-		return fmt.Sprintf("All day  %s", r.Summary)
+		return "All day"
 	case r.IsReminder():
-		return fmt.Sprintf("%s  %s", r.Start.Format("15:04"), r.Summary)
+		return r.Start.Format("15:04")
 	default:
-		return fmt.Sprintf("%s-%s  %s", r.Start.Format("15:04"), r.End.Format("15:04"), r.Summary)
+		return fmt.Sprintf("%s-%s", r.Start.Format("15:04"), r.End.Format("15:04"))
 	}
+}
+
+// String formats the row for display: TimeLabel followed by the summary.
+func (r Row) String() string {
+	return fmt.Sprintf("%s  %s", r.TimeLabel(), r.Summary)
 }
 
 // visibleAfterEnd is how long a past row stays on the display once it has
@@ -45,7 +52,22 @@ const visibleAfterEnd = time.Hour
 // FetchToday returns today's agenda rows (in loc's timezone) from
 // calendarID, excluding rows that finished more than an hour before now.
 func FetchToday(ctx context.Context, svc *calendar.Service, calendarID string, loc *time.Location, now time.Time) ([]Row, error) {
-	dayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, loc)
+	return FetchDay(ctx, svc, calendarID, loc, now, now)
+}
+
+// FetchDay returns day's agenda rows (in loc's timezone) from calendarID,
+// excluding rows that finished more than an hour before now. day and now
+// are deliberately separate parameters, not the same value reused twice:
+// day determines which 24h window is queried, while now determines the
+// past-event cutoff (visibleAfterEnd). FetchToday passes the same value
+// for both, since "today" and "the current moment" are the same thing —
+// but a caller fetching a *different* day (e.g. the night phase's
+// "tomorrow") must still pass the real current time as now, or every row
+// on that day would be compared against a fictitious "now" on a day that
+// hasn't happened yet, incorrectly filtering out everything that "ended"
+// before that fictitious time.
+func FetchDay(ctx context.Context, svc *calendar.Service, calendarID string, loc *time.Location, day, now time.Time) ([]Row, error) {
+	dayStart := time.Date(day.Year(), day.Month(), day.Day(), 0, 0, 0, 0, loc)
 	dayEnd := dayStart.Add(24 * time.Hour)
 
 	call := svc.Events.List(calendarID).

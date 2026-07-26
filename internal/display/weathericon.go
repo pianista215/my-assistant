@@ -92,41 +92,70 @@ type WeatherPanel struct {
 }
 
 // Weather panel layout constants, alongside NewSections/NewDailyLayout's
-// own layout constants in image.go.
+// own layout constants in image.go — see "Weather panel sizing and
+// layout" in CLAUDE.md for the two rounds of user feedback that produced
+// these values: first a size reduction (a 96/40 first pass made the
+// weather column taller than the weekly menu's budget below it), then a
+// switch from a left-aligned vertical icon+text list to this centered
+// "now" block + horizontal forecast row (the vertical list left most of
+// the column's width empty, since neither the icon nor the text needed
+// it).
 const (
-	weatherIconLargeSize = 96
-	weatherIconSmallSize = 28
-	weatherNowFontSize   = 40
-	weatherRowHeight     = 34
+	weatherIconLargeSize         = 64
+	weatherNowFontSize           = 30
+	weatherNowGap                = 16 // gap between the "now" icon and its temperature text
+	weatherForecastIconSize      = 32
+	weatherForecastLabelFontSize = 13
+	weatherForecastTextFontSize  = 15
+	weatherForecastGap           = 4 // gap between the label/icon/text stack within one forecast slot
 )
 
 // drawWeatherPanel draws panel's title (if any), the large "now" icon and
-// temperature, then a vertical list of small icon+time+temperature+rain%
-// rows — one per WeatherHour, stacked like drawSections' plain rows.
-// Returns the y immediately below the last row drawn, so it composes with
-// a bottom region the same way drawSections' return value does.
+// temperature centered as a block within width, then panel.Hours as a
+// horizontal row of equal-width slots spread across width — each slot's
+// time label, icon, and "temp rain%" text all centered within its own
+// slot. Returns the y immediately below the last row drawn, so it
+// composes with a bottom region the same way drawSections' return value
+// does.
 func drawWeatherPanel(canvas *image.Gray, x, y, width int, panel WeatherPanel) int {
 	if panel.Title != "" {
 		drawText(canvas, newBoldFace(sectionTitleFontSize), panel.Title, x, y)
 		y += sectionTitleHeight
 	}
 
-	drawIcon(canvas, panel.Now.IconKey, x, y, weatherIconLargeSize)
 	tempFace := newBoldFace(weatherNowFontSize)
+	tempText := fmt.Sprintf("%.0f°C", panel.Now.TempC)
+	nowBlockWidth := weatherIconLargeSize + weatherNowGap + measureWidth(tempFace, tempText)
+	nowBlockX := x + (width-nowBlockWidth)/2
+	if nowBlockX < x {
+		nowBlockX = x
+	}
+	drawIcon(canvas, panel.Now.IconKey, nowBlockX, y, weatherIconLargeSize)
 	tempY := y + (weatherIconLargeSize-tempFace.Metrics().Height.Ceil())/2
-	drawText(canvas, tempFace, fmt.Sprintf("%.0f°C", panel.Now.TempC), x+weatherIconLargeSize+16, tempY)
+	drawText(canvas, tempFace, tempText, nowBlockX+weatherIconLargeSize+weatherNowGap, tempY)
 	y += weatherIconLargeSize + sectionGap
 
-	rowFace := newFace(rowFontSize)
-	for _, h := range panel.Hours {
-		drawIcon(canvas, h.IconKey, x, y, weatherIconSmallSize)
-		text := fmt.Sprintf("%s  %.0f°C  %d%%", h.Label, h.TempC, h.PrecipPct)
-		textY := y + (weatherIconSmallSize-rowFace.Metrics().Height.Ceil())/2
-		drawText(canvas, rowFace, text, x+weatherIconSmallSize+12, textY)
-		y += weatherRowHeight
+	if len(panel.Hours) == 0 {
+		return y
 	}
 
-	return y
+	labelFace := newFace(weatherForecastLabelFontSize)
+	textFace := newFace(weatherForecastTextFontSize)
+	labelY := y
+	iconY := labelY + labelFace.Metrics().Height.Ceil() + weatherForecastGap
+	textY := iconY + weatherForecastIconSize + weatherForecastGap
+
+	slotWidth := width / len(panel.Hours)
+	for i, h := range panel.Hours {
+		centerX := x + i*slotWidth + slotWidth/2
+
+		drawText(canvas, labelFace, h.Label, centerX-measureWidth(labelFace, h.Label)/2, labelY)
+		drawIcon(canvas, h.IconKey, centerX-weatherForecastIconSize/2, iconY, weatherForecastIconSize)
+		text := fmt.Sprintf("%.0f°C %d%%", h.TempC, h.PrecipPct)
+		drawText(canvas, textFace, text, centerX-measureWidth(textFace, text)/2, textY)
+	}
+
+	return textY + textFace.Metrics().Height.Ceil()
 }
 
 // NewDailyLayoutWithWeather is NewDailyLayout's counterpart for the

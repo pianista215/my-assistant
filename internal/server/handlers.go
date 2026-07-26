@@ -120,7 +120,7 @@ func (s *Server) handleDisplay(w http.ResponseWriter, r *http.Request) {
 			log.Printf("server: fetching weekly menu: %v", menuErr)
 		}
 
-		left := []display.Section{{Title: "Eventos", Lines: agendaLines(rows)}}
+		left := []display.Section{agendaSection(rows)}
 		bottom := menuSections(days, menuErr)
 
 		showWeather := phase != phaseMidday
@@ -276,15 +276,20 @@ func parseDemoTime(raw string, loc *time.Location) (time.Time, error) {
 	return time.Date(today.Year(), today.Month(), today.Day(), parsed.Hour(), parsed.Minute(), 0, 0, loc), nil
 }
 
-func agendaLines(rows []calendar.Row) []string {
+// agendaSection builds the agenda column's Section: a bold time label plus
+// word-wrapped summary per row (display.Section.Events), so a long
+// summary wraps within the column instead of overflowing into the right
+// column — an empty agenda falls back to a plain Lines message instead,
+// since there's nothing to bullet/wrap.
+func agendaSection(rows []calendar.Row) display.Section {
 	if len(rows) == 0 {
-		return []string{"No events today"}
+		return display.Section{Title: "Eventos", Lines: []string{"No events today"}}
 	}
-	lines := make([]string, len(rows))
+	events := make([]display.EventLine, len(rows))
 	for i, row := range rows {
-		lines[i] = row.String()
+		events[i] = display.EventLine{Time: row.TimeLabel(), Text: row.Summary}
 	}
-	return lines
+	return display.Section{Title: "Eventos", Events: events}
 }
 
 func shoppingListLines(items []string, err error) []string {

@@ -38,12 +38,12 @@ func (c *Client) FetchToday(ctx context.Context) ([]Row, error) {
 	return FetchToday(ctx, c.svc, c.calendarID, c.loc, time.Now().In(c.loc))
 }
 
-// FetchForDay returns day's agenda rows, using day itself (rather than
-// time.Now()) as the reference "now" for both the day-window computation
-// and isVisible's past-event filtering. For a future day this makes the
-// filtering a harmless no-op — every row's End is necessarily still ahead
-// of day — which is fine, since there's no "past" to hide yet on a day
-// that hasn't happened.
+// FetchForDay returns day's agenda rows: day picks which 24h window to
+// query, while the real current time (not day) drives isVisible's
+// past-event filtering — see FetchDay's doc for why those must stay
+// separate. For a future day this makes the filtering a no-op — nothing
+// on a day that hasn't happened yet has "ended" relative to right now —
+// which is the intended behavior, not an approximation.
 func (c *Client) FetchForDay(ctx context.Context, day time.Time) ([]Row, error) {
-	return FetchToday(ctx, c.svc, c.calendarID, c.loc, day)
+	return FetchDay(ctx, c.svc, c.calendarID, c.loc, day, time.Now().In(c.loc))
 }
