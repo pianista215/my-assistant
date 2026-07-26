@@ -38,9 +38,10 @@ func main() {
 	pngPath := flag.String("png", "", "Save the image as a PNG at this path instead of printing to the terminal")
 	open := flag.Bool("open", false, "Save the image as a PNG and open it with the OS default viewer")
 	battery := flag.Int("battery", 100, "Battery percentage (1-100) sent as the battery query parameter (--url mode only)")
+	demoTime := flag.String("demo-time", "", "HH:MM override sent as the demo_time query parameter, to preview any time-of-day phase (morning/midday/night) without waiting on the real clock (--url mode only)")
 	flag.Parse()
 
-	data, err := loadData(*url, *token, *file, *battery)
+	data, err := loadData(*url, *token, *file, *battery, *demoTime)
 	if err != nil {
 		log.Fatalf("preview: %v", err)
 	}
@@ -76,7 +77,7 @@ func main() {
 	}
 }
 
-func loadData(rawURL, token, file string, battery int) ([]byte, error) {
+func loadData(rawURL, token, file string, battery int, demoTime string) ([]byte, error) {
 	switch {
 	case file != "":
 		return os.ReadFile(file)
@@ -87,6 +88,9 @@ func loadData(rawURL, token, file string, battery int) ([]byte, error) {
 		}
 		q := u.Query()
 		q.Set("battery", strconv.Itoa(battery))
+		if demoTime != "" {
+			q.Set("demo_time", demoTime)
+		}
 		u.RawQuery = q.Encode()
 
 		req, err := http.NewRequest(http.MethodGet, u.String(), nil)

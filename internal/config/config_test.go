@@ -13,6 +13,8 @@ var requiredEnv = map[string]string{
 	"CALENDAR_ID":             "reference@group.calendar.google.com",
 	"GOOGLE_SHEET_ID":         "1a2B3c4D5e6F7g8H9iJ0kLmNoPqRsTuVwXyZ",
 	"TZ":                      "Europe/Madrid",
+	"WEATHER_LATITUDE":        "40.4168",
+	"WEATHER_LONGITUDE":       "-3.7038",
 }
 
 func setEnv(t *testing.T, overrides map[string]string) {
@@ -49,6 +51,13 @@ func TestLoadRejectsInvalidTZ(t *testing.T) {
 	}
 }
 
+func TestLoadRejectsInvalidWeatherLatitude(t *testing.T) {
+	setEnv(t, map[string]string{"WEATHER_LATITUDE": "not-a-number"})
+	if _, err := Load(); err == nil {
+		t.Fatal("Load() expected an error for an invalid WEATHER_LATITUDE")
+	}
+}
+
 func TestLoadSucceeds(t *testing.T) {
 	setEnv(t, nil)
 
@@ -64,6 +73,12 @@ func TestLoadSucceeds(t *testing.T) {
 	}
 	if cfg.GoogleSheetID != requiredEnv["GOOGLE_SHEET_ID"] {
 		t.Fatalf("GoogleSheetID = %q, want %q", cfg.GoogleSheetID, requiredEnv["GOOGLE_SHEET_ID"])
+	}
+	if cfg.WeatherLatitude != 40.4168 {
+		t.Fatalf("WeatherLatitude = %v, want 40.4168", cfg.WeatherLatitude)
+	}
+	if cfg.WeatherLongitude != -3.7038 {
+		t.Fatalf("WeatherLongitude = %v, want -3.7038", cfg.WeatherLongitude)
 	}
 }
 

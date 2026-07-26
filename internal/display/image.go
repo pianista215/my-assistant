@@ -127,6 +127,14 @@ type Section struct {
 	// several onto a line wastes no meaning (e.g. the shopping list); not
 	// for content like the agenda where each line's position/time matters.
 	Bulleted bool
+
+	// Events, when non-empty, renders as a bulleted list with each
+	// entry's Time in bold and Text word-wrapped in the regular weight —
+	// used for the agenda, where a summary can run long enough to need
+	// real wrapping (unlike Bulleted's short shopping-list items, which
+	// are packed several-per-line instead of wrapped). Takes precedence
+	// over Lines/Bulleted when set.
+	Events []EventLine
 }
 
 // NewTextRows renders a header line followed by a single untitled section
@@ -241,12 +249,14 @@ func drawHeader(canvas *image.Gray, header string) int {
 }
 
 // drawSections stacks sections vertically at horizontal offset x starting
-// at y, wrapping within width (needed only by Bulleted sections, to decide
-// when a line is full), and returns the y immediately below the last line
-// drawn, so a caller can chain another region beneath it (or beneath
-// several, side by side, as NewDailyLayout does for its bottom region).
+// at y, wrapping within width (needed by Bulleted and Events sections, to
+// decide when a line is full), and returns the y immediately below the
+// last line drawn, so a caller can chain another region beneath it (or
+// beneath several, side by side, as NewDailyLayout does for its bottom
+// region).
 func drawSections(canvas *image.Gray, x, y, width int, sections []Section) int {
 	rowFace := newFace(rowFontSize)
+	boldRowFace := newBoldFace(rowFontSize)
 	sectionTitleFace := newBoldFace(sectionTitleFontSize)
 	for i, sec := range sections {
 		if sec.Title != "" {
@@ -256,9 +266,12 @@ func drawSections(canvas *image.Gray, x, y, width int, sections []Section) int {
 			drawText(canvas, sectionTitleFace, sec.Title, x, y)
 			y += sectionTitleHeight
 		}
-		if sec.Bulleted {
+		switch {
+		case len(sec.Events) > 0:
+			y = drawEventLines(canvas, boldRowFace, rowFace, x, y, width, sec.Events)
+		case sec.Bulleted:
 			y = drawBulletedLines(canvas, rowFace, x, y, width, sec.Lines)
-		} else {
+		default:
 			for _, line := range sec.Lines {
 				drawText(canvas, rowFace, line, x, y)
 				y += rowHeight

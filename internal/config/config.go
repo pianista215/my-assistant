@@ -4,6 +4,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"strconv"
 	"time"
 
 	"github.com/joho/godotenv"
@@ -29,6 +30,11 @@ type Config struct {
 	// Location is the timezone used to compute "today" and to format
 	// event times, parsed from the TZ environment variable.
 	Location *time.Location
+	// WeatherLatitude and WeatherLongitude are the fixed coordinates the
+	// weather panel's forecast is read for. Open-Meteo needs no API
+	// key/credentials file, unlike the Google integrations above.
+	WeatherLatitude  float64
+	WeatherLongitude float64
 }
 
 // Load reads configuration from the environment, loading a local .env
@@ -71,6 +77,15 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("config: invalid TZ %q: %w", tz, err)
 	}
 
+	latitude, err := parseRequiredFloat("WEATHER_LATITUDE")
+	if err != nil {
+		return nil, err
+	}
+	longitude, err := parseRequiredFloat("WEATHER_LONGITUDE")
+	if err != nil {
+		return nil, err
+	}
+
 	return &Config{
 		AuthToken:             token,
 		Port:                  port,
@@ -78,5 +93,19 @@ func Load() (*Config, error) {
 		CalendarID:            calendarID,
 		GoogleSheetID:         sheetID,
 		Location:              loc,
+		WeatherLatitude:       latitude,
+		WeatherLongitude:      longitude,
 	}, nil
+}
+
+func parseRequiredFloat(envVar string) (float64, error) {
+	raw := os.Getenv(envVar)
+	if raw == "" {
+		return 0, fmt.Errorf("config: %s environment variable is required", envVar)
+	}
+	value, err := strconv.ParseFloat(raw, 64)
+	if err != nil {
+		return 0, fmt.Errorf("config: invalid %s %q: %w", envVar, raw, err)
+	}
+	return value, nil
 }

@@ -95,6 +95,28 @@ func TestRowString(t *testing.T) {
 	}
 }
 
+func TestRowTimeLabel(t *testing.T) {
+	base := time.Date(2026, 7, 19, 9, 0, 0, 0, time.UTC)
+
+	cases := []struct {
+		name string
+		row  Row
+		want string
+	}{
+		{"reminder", Row{Summary: "Take pills", Start: base, End: base}, "09:00"},
+		{"event", Row{Summary: "Standup", Start: base, End: base.Add(30 * time.Minute)}, "09:00-09:30"},
+		{"all day", Row{Summary: "Public holiday", AllDay: true}, "All day"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.row.TimeLabel(); got != tc.want {
+				t.Fatalf("TimeLabel() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestIsVisible(t *testing.T) {
 	now := time.Date(2026, 7, 19, 12, 0, 0, 0, time.UTC)
 

@@ -9,6 +9,7 @@ import (
 
 	"github.com/pianista215/my-assistant/internal/calendar"
 	"github.com/pianista215/my-assistant/internal/display"
+	"github.com/pianista215/my-assistant/internal/weather"
 	"github.com/pianista215/my-assistant/internal/weeklymenu"
 )
 
@@ -55,47 +56,59 @@ func TestHandleDisplayRequiresValidBattery(t *testing.T) {
 }
 
 func TestHandleDisplayReturnsEncodedImage(t *testing.T) {
+	somePoints := []weather.HourPoint{{Time: time.Now(), TempC: 20, Code: 0}}
+
 	cases := []struct {
 		name            string
+		demoTime        string // "" leaves phase to whatever the real clock is; the shopping-list-specific cases below pin it to midday so they're deterministic.
 		calendarFetcher CalendarFetcher
 		shoppingFetcher ShoppingListFetcher
 		menuFetcher     MenuFetcher
+		weatherFetcher  WeatherFetcher
 	}{
 		{
 			"today's agenda",
-			fakeCalendarFetcher{rows: []calendar.Row{
+			"", fakeCalendarFetcher{rows: []calendar.Row{
 				{Summary: "Dentist", Start: time.Now(), End: time.Now().Add(30 * time.Minute)},
 			}},
-			fakeShoppingListFetcher{},
-			fakeMenuFetcher{},
+			fakeShoppingListFetcher{}, fakeMenuFetcher{}, fakeWeatherFetcher{points: somePoints},
 		},
-		{"empty agenda", fakeCalendarFetcher{}, fakeShoppingListFetcher{}, fakeMenuFetcher{}},
-		{"calendar fetch error", fakeCalendarFetcher{err: errors.New("boom")}, fakeShoppingListFetcher{}, fakeMenuFetcher{}},
+		{"empty agenda", "", fakeCalendarFetcher{}, fakeShoppingListFetcher{}, fakeMenuFetcher{}, fakeWeatherFetcher{points: somePoints}},
+		{"calendar fetch error", "", fakeCalendarFetcher{err: errors.New("boom")}, fakeShoppingListFetcher{}, fakeMenuFetcher{}, fakeWeatherFetcher{points: somePoints}},
 		{
 			"shopping list items",
-			fakeCalendarFetcher{},
-			fakeShoppingListFetcher{items: []string{"Leche", "Pan"}},
-			fakeMenuFetcher{},
+			"17:00", fakeCalendarFetcher{}, fakeShoppingListFetcher{items: []string{"Leche", "Pan"}}, fakeMenuFetcher{}, fakeWeatherFetcher{points: somePoints},
 		},
-		{"empty shopping list", fakeCalendarFetcher{}, fakeShoppingListFetcher{}, fakeMenuFetcher{}},
-		{"shopping list fetch error", fakeCalendarFetcher{}, fakeShoppingListFetcher{err: errors.New("boom")}, fakeMenuFetcher{}},
+		{
+			"empty shopping list falls back to weather",
+			"17:00", fakeCalendarFetcher{}, fakeShoppingListFetcher{}, fakeMenuFetcher{}, fakeWeatherFetcher{points: somePoints},
+		},
+		{
+			"shopping list fetch error",
+			"17:00", fakeCalendarFetcher{}, fakeShoppingListFetcher{err: errors.New("boom")}, fakeMenuFetcher{}, fakeWeatherFetcher{points: somePoints},
+		},
 		{
 			"weekly menu days",
-			fakeCalendarFetcher{},
-			fakeShoppingListFetcher{},
-			fakeMenuFetcher{week: []weeklymenu.Day{
+			"", fakeCalendarFetcher{}, fakeShoppingListFetcher{}, fakeMenuFetcher{week: []weeklymenu.Day{
 				{Label: "Lunes", Lunch: []string{"Lentejas"}, Dinner: []string{"Tortilla"}},
-			}},
+			}}, fakeWeatherFetcher{points: somePoints},
 		},
-		{"empty weekly menu", fakeCalendarFetcher{}, fakeShoppingListFetcher{}, fakeMenuFetcher{}},
-		{"weekly menu fetch error", fakeCalendarFetcher{}, fakeShoppingListFetcher{}, fakeMenuFetcher{err: errors.New("boom")}},
+		{"empty weekly menu", "", fakeCalendarFetcher{}, fakeShoppingListFetcher{}, fakeMenuFetcher{}, fakeWeatherFetcher{points: somePoints}},
+		{"weekly menu fetch error", "", fakeCalendarFetcher{}, fakeShoppingListFetcher{}, fakeMenuFetcher{err: errors.New("boom")}, fakeWeatherFetcher{points: somePoints}},
+		{"weather fetch error (morning)", "10:00", fakeCalendarFetcher{}, fakeShoppingListFetcher{}, fakeMenuFetcher{}, fakeWeatherFetcher{err: errors.New("boom")}},
+		{"weather panel (morning)", "10:00", fakeCalendarFetcher{}, fakeShoppingListFetcher{}, fakeMenuFetcher{}, fakeWeatherFetcher{points: somePoints}},
+		{"night phase, tomorrow's agenda/menu", "22:00", fakeCalendarFetcher{}, fakeShoppingListFetcher{}, fakeMenuFetcher{}, fakeWeatherFetcher{points: somePoints}},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			srv := newTestServerWithFetchers(t, tc.calendarFetcher, tc.shoppingFetcher, tc.menuFetcher)
+			srv := newTestServerWithFetchers(t, tc.calendarFetcher, tc.shoppingFetcher, tc.menuFetcher, tc.weatherFetcher)
 
-			req := httptest.NewRequest(http.MethodGet, "/api/v1/display?battery=87", nil)
+			target := "/api/v1/display?battery=87"
+			if tc.demoTime != "" {
+				target += "&demo_time=" + tc.demoTime
+			}
+			req := httptest.NewRequest(http.MethodGet, target, nil)
 			req.Header.Set("Authorization", "Bearer correct-token")
 			rec := httptest.NewRecorder()
 
@@ -116,5 +129,93 @@ func TestHandleDisplayReturnsEncodedImage(t *testing.T) {
 				t.Fatalf("dimensions = %dx%d, want %dx%d", img.Width, img.Height, display.Width, display.Height)
 			}
 		})
+	}
+}
+
+func TestHandleDisplayRequiresValidDemoTime(t *testing.T) {
+	srv := newTestServer(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/display?battery=87&demo_time=not-a-time", nil)
+	req.Header.Set("Authorization", "Bearer correct-token")
+	rec := httptest.NewRecorder()
+
+	srv.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusBadRequest)
+	}
+}
+
+func TestAgendaSectionEmptyFallsBackToPlainLines(t *testing.T) {
+	sec := agendaSection(nil)
+	if sec.Title != "Eventos" {
+		t.Errorf("Title = %q, want %q", sec.Title, "Eventos")
+	}
+	if len(sec.Events) != 0 {
+		t.Errorf("Events = %v, want empty", sec.Events)
+	}
+	if len(sec.Lines) != 1 || sec.Lines[0] != "No events today" {
+		t.Errorf("Lines = %v, want [\"No events today\"]", sec.Lines)
+	}
+}
+
+func TestAgendaSectionBuildsEventsWithSeparateTimeAndText(t *testing.T) {
+	base := time.Date(2026, 7, 26, 9, 0, 0, 0, time.UTC)
+	rows := []calendar.Row{
+		{Summary: "Dentist", Start: base, End: base.Add(30 * time.Minute)},
+	}
+
+	sec := agendaSection(rows)
+	if len(sec.Lines) != 0 {
+		t.Errorf("Lines = %v, want empty", sec.Lines)
+	}
+	if len(sec.Events) != 1 {
+		t.Fatalf("len(Events) = %d, want 1", len(sec.Events))
+	}
+	if sec.Events[0].Time != "09:00-09:30" || sec.Events[0].Text != "Dentist" {
+		t.Errorf("Events[0] = %+v, want Time=09:00-09:30 Text=Dentist", sec.Events[0])
+	}
+}
+
+func TestPhaseForBoundaries(t *testing.T) {
+	cases := []struct {
+		hour int
+		want dayPhase
+	}{
+		{0, phaseMorning},
+		{14, phaseMorning},
+		{15, phaseMidday},
+		{20, phaseMidday},
+		{21, phaseNight},
+		{23, phaseNight},
+	}
+	for _, tc := range cases {
+		now := time.Date(2026, 7, 25, tc.hour, 0, 0, 0, time.UTC)
+		if got := phaseFor(now); got != tc.want {
+			t.Errorf("phaseFor(hour=%d) = %v, want %v", tc.hour, got, tc.want)
+		}
+	}
+}
+
+func TestParseDemoTime(t *testing.T) {
+	loc := time.UTC
+
+	got, err := parseDemoTime("22:30", loc)
+	if err != nil {
+		t.Fatalf("parseDemoTime() error = %v", err)
+	}
+	if got.Hour() != 22 || got.Minute() != 30 {
+		t.Fatalf("parsed = %v, want hour=22 minute=30", got)
+	}
+	today := time.Now().In(loc)
+	if got.Year() != today.Year() || got.Month() != today.Month() || got.Day() != today.Day() {
+		t.Fatalf("parsed date = %v, want today (%v)", got, today)
+	}
+
+	invalid := []string{"", "25:00", "abc", "10:70", "10"}
+	for _, raw := range invalid {
+		if _, err := parseDemoTime(raw, loc); err == nil {
+			t.Errorf("parseDemoTime(%q) expected an error", raw)
+		}
 	}
 }
