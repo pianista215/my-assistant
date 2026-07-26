@@ -44,10 +44,15 @@ func (f fakeShoppingListFetcher) FetchItems(ctx context.Context) ([]string, erro
 // fakeMenuFetcher lets tests control what handleDisplay sees without
 // making a real Google Sheets API call. FetchWeekFrom ignores day and
 // returns the same fixed week/err as FetchWeek, same rationale as
-// fakeCalendarFetcher.FetchForDay above.
+// fakeCalendarFetcher.FetchForDay above. cleared, if non-nil, records
+// every weekday ClearDay was called with, for tests that assert on the
+// night-phase clear-once-per-day behavior; left nil in every other test
+// case, which just makes ClearDay a no-op.
 type fakeMenuFetcher struct {
-	week []weeklymenu.Day
-	err  error
+	week     []weeklymenu.Day
+	err      error
+	cleared  *[]time.Weekday
+	clearErr error
 }
 
 func (f fakeMenuFetcher) FetchWeek(ctx context.Context) ([]weeklymenu.Day, error) {
@@ -56,6 +61,13 @@ func (f fakeMenuFetcher) FetchWeek(ctx context.Context) ([]weeklymenu.Day, error
 
 func (f fakeMenuFetcher) FetchWeekFrom(ctx context.Context, day time.Time) ([]weeklymenu.Day, error) {
 	return f.week, f.err
+}
+
+func (f fakeMenuFetcher) ClearDay(ctx context.Context, day time.Weekday) error {
+	if f.cleared != nil {
+		*f.cleared = append(*f.cleared, day)
+	}
+	return f.clearErr
 }
 
 // fakeWeatherFetcher lets tests control what handleDisplay sees without

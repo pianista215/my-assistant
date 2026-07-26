@@ -146,6 +146,50 @@ func TestHandleDisplayRequiresValidDemoTime(t *testing.T) {
 	}
 }
 
+func TestHandleDisplayNightPhaseClearsOutgoingMenuOnce(t *testing.T) {
+	var cleared []time.Weekday
+	menuFetcher := fakeMenuFetcher{cleared: &cleared}
+	srv := newTestServerWithFetchers(t, fakeCalendarFetcher{}, fakeShoppingListFetcher{}, menuFetcher, fakeWeatherFetcher{points: []weather.HourPoint{{Time: time.Now(), TempC: 20, Code: 0}}})
+
+	for _, demoTime := range []string{"21:00", "22:00", "23:00"} {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/display?battery=87&demo_time="+demoTime, nil)
+		req.Header.Set("Authorization", "Bearer correct-token")
+		rec := httptest.NewRecorder()
+		srv.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("demo_time=%s: status = %d, want %d", demoTime, rec.Code, http.StatusOK)
+		}
+	}
+
+	if len(cleared) != 1 {
+		t.Fatalf("cleared = %v, want exactly one call", cleared)
+	}
+	wantDay := time.Now().Weekday()
+	if cleared[0] != wantDay {
+		t.Fatalf("cleared[0] = %v, want %v", cleared[0], wantDay)
+	}
+}
+
+func TestHandleDisplayNonNightPhaseNeverClearsMenu(t *testing.T) {
+	var cleared []time.Weekday
+	menuFetcher := fakeMenuFetcher{cleared: &cleared}
+	srv := newTestServerWithFetchers(t, fakeCalendarFetcher{}, fakeShoppingListFetcher{}, menuFetcher, fakeWeatherFetcher{points: []weather.HourPoint{{Time: time.Now(), TempC: 20, Code: 0}}})
+
+	for _, demoTime := range []string{"10:00", "17:00"} {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/display?battery=87&demo_time="+demoTime, nil)
+		req.Header.Set("Authorization", "Bearer correct-token")
+		rec := httptest.NewRecorder()
+		srv.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("demo_time=%s: status = %d, want %d", demoTime, rec.Code, http.StatusOK)
+		}
+	}
+
+	if len(cleared) != 0 {
+		t.Fatalf("cleared = %v, want no calls", cleared)
+	}
+}
+
 func TestAgendaSectionEmptyFallsBackToPlainLines(t *testing.T) {
 	sec := agendaSection(nil)
 	if sec.Title != "Eventos" {
@@ -154,8 +198,8 @@ func TestAgendaSectionEmptyFallsBackToPlainLines(t *testing.T) {
 	if len(sec.Events) != 0 {
 		t.Errorf("Events = %v, want empty", sec.Events)
 	}
-	if len(sec.Lines) != 1 || sec.Lines[0] != "No events today" {
-		t.Errorf("Lines = %v, want [\"No events today\"]", sec.Lines)
+	if len(sec.Lines) != 1 || sec.Lines[0] != "No hay eventos" {
+		t.Errorf("Lines = %v, want [\"No hay eventos\"]", sec.Lines)
 	}
 }
 

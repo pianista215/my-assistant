@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"net/http"
@@ -87,6 +88,10 @@ func (s *Server) handleDisplay(w http.ResponseWriter, r *http.Request) {
 	footer := fmt.Sprintf("%s - %d%%", now.Format("15:04:05"), battery)
 
 	phase := phaseFor(now)
+	if phase == phaseNight {
+		s.clearOutgoingMenuOnce(r.Context(), now)
+	}
+
 	header := spanishHeaderDate(now)
 	referenceDay := now
 	if phase == phaseNight {
@@ -104,7 +109,7 @@ func (s *Server) handleDisplay(w http.ResponseWriter, r *http.Request) {
 	var img *display.GrayImage
 	if err != nil {
 		log.Printf("server: fetching calendar: %v", err)
-		img = display.NewTextRows("Could not load calendar", footer, []string{
+		img = display.NewTextRows("No se pudo cargar el calendario", footer, []string{
 			now.Format("2006-01-02 15:04:05"),
 			err.Error(),
 		})
@@ -156,6 +161,29 @@ func (s *Server) handleDisplay(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Write(data)
+}
+
+// clearOutgoingMenuOnce clears the outgoing day's (now.Weekday()) menu
+// cells the first time the night phase is reached each calendar day —
+// guarded so the ESP32's hourly polls within the 21:00-23:59 window don't
+// repeatedly wipe an entry the user just refilled for next week. The
+// clear is fire-and-forget relative to the rest of the response: a
+// failure is only logged, same non-fatal treatment as the shopping
+// list/weekly menu/weather fetches below.
+func (s *Server) clearOutgoingMenuOnce(ctx context.Context, now time.Time) {
+	key := now.Format("2006-01-02")
+	s.menuClearMu.Lock()
+	alreadyCleared := s.menuClearedDate == key
+	if !alreadyCleared {
+		s.menuClearedDate = key
+	}
+	s.menuClearMu.Unlock()
+	if alreadyCleared {
+		return
+	}
+	if err := s.menu.ClearDay(ctx, now.Weekday()); err != nil {
+		log.Printf("server: clearing outgoing day's menu: %v", err)
+	}
 }
 
 // buildWeatherImage fetches the forecast and renders the weather panel
@@ -283,7 +311,7 @@ func parseDemoTime(raw string, loc *time.Location) (time.Time, error) {
 // since there's nothing to bullet/wrap.
 func agendaSection(rows []calendar.Row) display.Section {
 	if len(rows) == 0 {
-		return display.Section{Title: "Eventos", Lines: []string{"No events today"}}
+		return display.Section{Title: "Eventos", Lines: []string{"No hay eventos"}}
 	}
 	events := make([]display.EventLine, len(rows))
 	for i, row := range rows {

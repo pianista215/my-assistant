@@ -5,6 +5,7 @@ package server
 import (
 	"context"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/pianista215/my-assistant/internal/calendar"
@@ -33,11 +34,14 @@ type ShoppingListFetcher interface {
 // MenuFetcher returns the current week's menu: FetchWeek rotated to start
 // at today, FetchWeekFrom rotated to start at an arbitrary reference day
 // (used by the night phase the same way CalendarFetcher.FetchForDay is).
-// Satisfied in production by internal/weeklymenu.Client; tests can supply
-// a fake instead of hitting the network.
+// ClearDay blanks one weekday's entries, used to reset the outgoing day's
+// menu once the night phase is reached. Satisfied in production by
+// internal/weeklymenu.Client; tests can supply a fake instead of hitting
+// the network.
 type MenuFetcher interface {
 	FetchWeek(ctx context.Context) ([]weeklymenu.Day, error)
 	FetchWeekFrom(ctx context.Context, day time.Time) ([]weeklymenu.Day, error)
+	ClearDay(ctx context.Context, day time.Weekday) error
 }
 
 // WeatherFetcher returns the hourly forecast for the configured location.
@@ -54,6 +58,13 @@ type Server struct {
 	menu         MenuFetcher
 	weather      WeatherFetcher
 	mux          *http.ServeMux
+
+	// menuClearMu guards menuClearedDate, the date (in cfg.Location) the
+	// outgoing day's menu was last cleared, so the night phase's ~3
+	// hourly polls only trigger one clear per calendar day instead of
+	// repeatedly wiping an entry the user just refilled for next week.
+	menuClearMu     sync.Mutex
+	menuClearedDate string
 }
 
 func New(cfg *config.Config, calendarFetcher CalendarFetcher, shoppingListFetcher ShoppingListFetcher, menuFetcher MenuFetcher, weatherFetcher WeatherFetcher) *Server {

@@ -89,6 +89,34 @@ func TestParseWeekEmptyInput(t *testing.T) {
 	}
 }
 
+func TestMenuColumnRange(t *testing.T) {
+	cases := []struct {
+		name string
+		day  time.Weekday
+		want string
+	}{
+		{"Monday is column A", time.Monday, "'Menu'!A2:A12"},
+		{"Sunday is column G", time.Sunday, "'Menu'!G2:G12"},
+		{"Wednesday is column C", time.Wednesday, "'Menu'!C2:C12"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := menuColumnRange("Menu", tc.day); got != tc.want {
+				t.Fatalf("menuColumnRange(%v) = %q, want %q", tc.day, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestMenuColumnRangeQuotesTabTitle(t *testing.T) {
+	got := menuColumnRange("It's Menu", time.Monday)
+	want := "'It''s Menu'!A2:A12"
+	if got != want {
+		t.Fatalf("menuColumnRange() = %q, want %q", got, want)
+	}
+}
+
 func equalSlices(a, b []string) bool {
 	if len(a) != len(b) {
 		return false
