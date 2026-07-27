@@ -5,6 +5,7 @@
 package main
 
 import (
+	"crypto/tls"
 	"flag"
 	"fmt"
 	"image"
@@ -39,9 +40,10 @@ func main() {
 	open := flag.Bool("open", false, "Save the image as a PNG and open it with the OS default viewer")
 	battery := flag.Int("battery", 100, "Battery percentage (1-100) sent as the battery query parameter (--url mode only)")
 	demoTime := flag.String("demo-time", "", "HH:MM override sent as the demo_time query parameter, to preview any time-of-day phase (morning/midday/night) without waiting on the real clock (--url mode only)")
+	insecure := flag.Bool("insecure", false, "Skip TLS certificate verification, like curl -k (--url mode only) — needed when --url points at a server started with `server --https`, since its self-signed certificate isn't trusted by default")
 	flag.Parse()
 
-	data, err := loadData(*url, *token, *file, *battery, *demoTime)
+	data, err := loadData(*url, *token, *file, *battery, *demoTime, *insecure)
 	if err != nil {
 		log.Fatalf("preview: %v", err)
 	}
@@ -77,7 +79,7 @@ func main() {
 	}
 }
 
-func loadData(rawURL, token, file string, battery int, demoTime string) ([]byte, error) {
+func loadData(rawURL, token, file string, battery int, demoTime string, insecure bool) ([]byte, error) {
 	switch {
 	case file != "":
 		return os.ReadFile(file)
@@ -101,7 +103,12 @@ func loadData(rawURL, token, file string, battery int, demoTime string) ([]byte,
 			req.Header.Set("Authorization", "Bearer "+token)
 		}
 
-		resp, err := http.DefaultClient.Do(req)
+		client := http.DefaultClient
+		if insecure {
+			client = &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}}
+		}
+
+		resp, err := client.Do(req)
 		if err != nil {
 			return nil, err
 		}

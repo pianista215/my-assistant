@@ -51,12 +51,32 @@ type WeatherFetcher interface {
 	FetchForecast(ctx context.Context) ([]weather.HourPoint, error)
 }
 
+// TLSInfo carries the running server's TLS certificate details, for the
+// /api/v1/tls-cert endpoint. The zero value (Fingerprint == "") means the
+// server is running plain HTTP — routes() uses that to decide whether to
+// register the endpoint at all, since there's no certificate to report
+// otherwise. Server never generates or parses the certificate itself
+// (that's cmd/server's job, see cmd/server/tls.go) — it only serves
+// whatever strings it's handed, the same shallow-parameter style as the
+// fetcher interfaces above.
+type TLSInfo struct {
+	// Fingerprint is the certificate's SHA-256 fingerprint, formatted as
+	// colon-separated uppercase hex (the same format `openssl x509
+	// -fingerprint -sha256` prints).
+	Fingerprint string
+	// CertPEM is the certificate's raw PEM text — what actually gets
+	// embedded in ESP32 firmware (e.g. via WiFiClientSecure::setCACert()
+	// on Arduino, or esp_tls_cfg_t.cacert_buf on ESP-IDF) to trust it.
+	CertPEM string
+}
+
 type Server struct {
 	cfg          *config.Config
 	calendar     CalendarFetcher
 	shoppingList ShoppingListFetcher
 	menu         MenuFetcher
 	weather      WeatherFetcher
+	tls          TLSInfo
 	mux          *http.ServeMux
 
 	// menuClearMu guards menuClearedDate, the date (in cfg.Location) the
@@ -67,8 +87,8 @@ type Server struct {
 	menuClearedDate string
 }
 
-func New(cfg *config.Config, calendarFetcher CalendarFetcher, shoppingListFetcher ShoppingListFetcher, menuFetcher MenuFetcher, weatherFetcher WeatherFetcher) *Server {
-	s := &Server{cfg: cfg, calendar: calendarFetcher, shoppingList: shoppingListFetcher, menu: menuFetcher, weather: weatherFetcher, mux: http.NewServeMux()}
+func New(cfg *config.Config, calendarFetcher CalendarFetcher, shoppingListFetcher ShoppingListFetcher, menuFetcher MenuFetcher, weatherFetcher WeatherFetcher, tlsInfo TLSInfo) *Server {
+	s := &Server{cfg: cfg, calendar: calendarFetcher, shoppingList: shoppingListFetcher, menu: menuFetcher, weather: weatherFetcher, tls: tlsInfo, mux: http.NewServeMux()}
 	s.routes()
 	return s
 }

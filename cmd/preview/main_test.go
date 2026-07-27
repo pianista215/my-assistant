@@ -2,12 +2,46 @@ package main
 
 import (
 	"image/png"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/pianista215/my-assistant/internal/display"
 )
+
+func TestLoadDataFromInsecureHTTPSServer(t *testing.T) {
+	want := []byte("fake buffer")
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write(want)
+	}))
+	defer srv.Close()
+
+	got, err := loadData(srv.URL, "", "", 100, "", true)
+	if err != nil {
+		t.Fatalf("loadData() with insecure=true error = %v", err)
+	}
+	if string(got) != string(want) {
+		t.Errorf("loadData() = %q, want %q", got, want)
+	}
+}
+
+func TestLoadDataFromHTTPSServerRequiresInsecureFlag(t *testing.T) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("fake buffer"))
+	}))
+	defer srv.Close()
+
+	_, err := loadData(srv.URL, "", "", 100, "", false)
+	if err == nil {
+		t.Fatal("loadData() with insecure=false error = nil, want a TLS verification error")
+	}
+	if !strings.Contains(err.Error(), "certificate") {
+		t.Errorf("loadData() error = %v, want a certificate-verification error", err)
+	}
+}
 
 func TestSavePNGWritesDecodableNativeResolutionImage(t *testing.T) {
 	img := display.NewGrayImage(display.Width, display.Height)

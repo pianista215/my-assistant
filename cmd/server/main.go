@@ -3,6 +3,7 @@ package main
 
 import (
 	"context"
+	"flag"
 	"log"
 	"net/http"
 
@@ -15,6 +16,9 @@ import (
 )
 
 func main() {
+	httpsEnabled := flag.Bool("https", false, "Serve over HTTPS using a self-signed certificate (generated once at secrets/tls-cert.pem / secrets/tls-key.pem and reused on every restart)")
+	flag.Parse()
+
 	cfg, err := config.Load()
 	if err != nil {
 		log.Fatalf("config: %v", err)
@@ -37,11 +41,27 @@ func main() {
 
 	weatherClient := weather.NewClient(cfg.WeatherLatitude, cfg.WeatherLongitude, cfg.Location)
 
-	srv := server.New(cfg, calClient, shoppingListClient, menuClient, weatherClient)
+	var tlsInfo server.TLSInfo
+	if *httpsEnabled {
+		fingerprint, certPEM, err := ensureTLSCert(tlsCertPath, tlsKeyPath)
+		if err != nil {
+			log.Fatalf("tls: %v", err)
+		}
+		log.Printf("tls: certificate ready, sha256 fingerprint: %s", fingerprint)
+		tlsInfo = server.TLSInfo{Fingerprint: fingerprint, CertPEM: certPEM}
+	}
+
+	srv := server.New(cfg, calClient, shoppingListClient, menuClient, weatherClient, tlsInfo)
 
 	addr := ":" + cfg.Port
-	log.Printf("listening on %s", addr)
-	if err := http.ListenAndServe(addr, srv); err != nil {
+	if *httpsEnabled {
+		log.Printf("listening on %s (https)", addr)
+		err = http.ListenAndServeTLS(addr, tlsCertPath, tlsKeyPath, srv)
+	} else {
+		log.Printf("listening on %s", addr)
+		err = http.ListenAndServe(addr, srv)
+	}
+	if err != nil {
 		log.Fatalf("server: %v", err)
 	}
 }
