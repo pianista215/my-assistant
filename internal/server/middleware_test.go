@@ -88,8 +88,13 @@ func newTestServer(t *testing.T) *Server {
 
 func newTestServerWithFetchers(t *testing.T, calendarFetcher CalendarFetcher, shoppingListFetcher ShoppingListFetcher, menuFetcher MenuFetcher, weatherFetcher WeatherFetcher) *Server {
 	t.Helper()
+	return newTestServerWithTLS(t, calendarFetcher, shoppingListFetcher, menuFetcher, weatherFetcher, TLSInfo{})
+}
+
+func newTestServerWithTLS(t *testing.T, calendarFetcher CalendarFetcher, shoppingListFetcher ShoppingListFetcher, menuFetcher MenuFetcher, weatherFetcher WeatherFetcher, tlsInfo TLSInfo) *Server {
+	t.Helper()
 	cfg := &config.Config{AuthToken: "correct-token", Port: "0", Location: time.UTC}
-	return New(cfg, calendarFetcher, shoppingListFetcher, menuFetcher, weatherFetcher)
+	return New(cfg, calendarFetcher, shoppingListFetcher, menuFetcher, weatherFetcher, tlsInfo)
 }
 
 func TestRequireAuth(t *testing.T) {

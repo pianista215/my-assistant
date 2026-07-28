@@ -55,6 +55,23 @@ func phaseFor(now time.Time) dayPhase {
 	}
 }
 
+// handleTLSCert serves an HTML page with the running server's TLS
+// certificate fingerprint and full PEM text, so they can be read (and
+// copied) from an ordinary mobile browser — e.g. to embed the PEM in
+// ESP32 firmware doing certificate pinning — without needing openssl or
+// any other tooling. Deliberately unauthenticated (see routes()/New()):
+// the certificate isn't sensitive, since having it doesn't let anyone
+// impersonate the server without the private key, and requiring the
+// auth token here would make it painful to view from a phone. Only
+// reachable at all when the server was started with --https (see
+// routes()).
+func (s *Server) handleTLSCert(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := tlsCertPageTmpl.Execute(w, s.tls); err != nil {
+		log.Printf("server: rendering tls-cert page: %v", err)
+	}
+}
+
 // handleDisplay serves the image the ESP32 should render: the agenda in a
 // left column, and in the right column either the current shopping list
 // (phaseMidday, unless it's empty) or a visual weather panel (every other
