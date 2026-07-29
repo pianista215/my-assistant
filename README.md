@@ -72,6 +72,8 @@ The **second tab** of that same spreadsheet holds the weekly menu, with a fixed 
 
 Blank cells and rows are skipped silently, so a day doesn't need all 5 lunch/dinner rows filled in.
 
+See [`examples/example-spreadsheet.xlsx`](examples/example-spreadsheet.xlsx) for a filled-in example of both tabs.
+
 ## Running the server
 
 ```bash
@@ -277,6 +279,8 @@ Covers: token and battery-parameter validation, round-trip encoding/decoding of 
 ## Project structure
 
 ```
+examples/
+  example-spreadsheet.xlsx # reference spreadsheet: shopping list (first tab) + weekly menu (second tab)
 cmd/
   server/        # HTTP(S) server entrypoint; HTTPS by default (generates/reuses a self-signed cert, cmd/server/tls.go), --insecure for plain HTTP
   preview/       # terminal/PNG buffer visualization CLI
