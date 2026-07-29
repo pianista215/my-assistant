@@ -35,7 +35,7 @@ func TestHandleTLSCertServesFingerprintAndPEM(t *testing.T) {
 	}
 }
 
-func TestTLSCertRouteNotRegisteredWhenHTTPSDisabled(t *testing.T) {
+func TestTLSCertRouteNotRegisteredWhenInsecure(t *testing.T) {
 	srv := newTestServer(t)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/tls-cert", nil)

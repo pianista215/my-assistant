@@ -13,11 +13,11 @@ import "html/template"
 var tlsCertPageTmpl = template.Must(template.New("tlscert").Parse(tlsCertPageHTML))
 
 const tlsCertPageHTML = `<!DOCTYPE html>
-<html lang="es">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Certificado TLS</title>
+<title>TLS Certificate</title>
 <style>
   body { font-family: -apple-system, system-ui, sans-serif; max-width: 640px; margin: 2rem auto; padding: 0 1rem; color: #222; }
   h1 { font-size: 1.3rem; }
@@ -28,30 +28,30 @@ const tlsCertPageHTML = `<!DOCTYPE html>
 </style>
 </head>
 <body>
-<h1>Certificado TLS de my-assistant</h1>
+<h1>my-assistant TLS certificate</h1>
 
 <h2>Fingerprint (SHA-256)</h2>
 <pre id="fp">{{.Fingerprint}}</pre>
-<button type="button" onclick="copyFrom('fp', this)">Copiar fingerprint</button>
+<button type="button" onclick="copyFrom('fp', this)">Copy fingerprint</button>
 
-<h2>Certificado completo (PEM)</h2>
+<h2>Full certificate (PEM)</h2>
 <pre id="pem">{{.CertPEM}}</pre>
-<button type="button" onclick="copyFrom('pem', this)">Copiar certificado (PEM)</button>
+<button type="button" onclick="copyFrom('pem', this)">Copy certificate (PEM)</button>
 
 <script>
 function copyFrom(id, btn) {
   var text = document.getElementById(id).innerText;
   var original = btn.textContent;
   function done() {
-    btn.textContent = '¡Copiado!';
+    btn.textContent = 'Copied!';
     setTimeout(function() { btn.textContent = original; }, 1500);
   }
   if (navigator.clipboard && navigator.clipboard.writeText) {
     navigator.clipboard.writeText(text).then(done, function() {
-      alert('No se pudo copiar automáticamente. Selecciona el texto manualmente.');
+      alert('Could not copy automatically. Select the text manually.');
     });
   } else {
-    alert('El portapapeles no está disponible en este navegador. Selecciona el texto manualmente.');
+    alert('Clipboard is not available in this browser. Select the text manually.');
   }
 }
 </script>
