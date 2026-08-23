@@ -151,7 +151,7 @@ func TestHandleDisplayNightPhaseClearsOutgoingMenuOnce(t *testing.T) {
 	menuFetcher := fakeMenuFetcher{cleared: &cleared}
 	srv := newTestServerWithFetchers(t, fakeCalendarFetcher{}, fakeShoppingListFetcher{}, menuFetcher, fakeWeatherFetcher{points: []weather.HourPoint{{Time: time.Now(), TempC: 20, Code: 0}}})
 
-	for _, demoTime := range []string{"21:00", "22:00", "23:00"} {
+	for _, demoTime := range []string{"22:00", "23:00", "23:30"} {
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/display?battery=87&demo_time="+demoTime, nil)
 		req.Header.Set("Authorization", "Bearer correct-token")
 		rec := httptest.NewRecorder()
@@ -175,7 +175,7 @@ func TestHandleDisplayNonNightPhaseNeverClearsMenu(t *testing.T) {
 	menuFetcher := fakeMenuFetcher{cleared: &cleared}
 	srv := newTestServerWithFetchers(t, fakeCalendarFetcher{}, fakeShoppingListFetcher{}, menuFetcher, fakeWeatherFetcher{points: []weather.HourPoint{{Time: time.Now(), TempC: 20, Code: 0}}})
 
-	for _, demoTime := range []string{"10:00", "17:00"} {
+	for _, demoTime := range []string{"10:00", "17:00", "21:00"} {
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/display?battery=87&demo_time="+demoTime, nil)
 		req.Header.Set("Authorization", "Bearer correct-token")
 		rec := httptest.NewRecorder()
@@ -230,7 +230,8 @@ func TestPhaseForBoundaries(t *testing.T) {
 		{14, phaseMorning},
 		{15, phaseMidday},
 		{20, phaseMidday},
-		{21, phaseNight},
+		{21, phaseMidday},
+		{22, phaseNight},
 		{23, phaseNight},
 	}
 	for _, tc := range cases {

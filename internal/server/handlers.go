@@ -39,8 +39,8 @@ type dayPhase int
 
 const (
 	phaseMorning dayPhase = iota // 00:00-15:00: agenda | weather, today
-	phaseMidday                  // 15:00-21:00: agenda | shopping list (or weather if empty), today
-	phaseNight                   // 21:00-00:00: agenda | weather, both referencing tomorrow
+	phaseMidday                  // 15:00-22:00: agenda | shopping list (or weather if empty), today
+	phaseNight                   // 22:00-00:00: agenda | weather, both referencing tomorrow
 )
 
 // phaseFor picks the phase for the given wall-clock time.
@@ -48,7 +48,7 @@ func phaseFor(now time.Time) dayPhase {
 	switch h := now.Hour(); {
 	case h < 15:
 		return phaseMorning
-	case h < 21:
+	case h < 22:
 		return phaseMidday
 	default:
 		return phaseNight
@@ -182,7 +182,7 @@ func (s *Server) handleDisplay(w http.ResponseWriter, r *http.Request) {
 
 // clearOutgoingMenuOnce clears the outgoing day's (now.Weekday()) menu
 // cells the first time the night phase is reached each calendar day —
-// guarded so the ESP32's hourly polls within the 21:00-23:59 window don't
+// guarded so the ESP32's hourly polls within the 22:00-23:59 window don't
 // repeatedly wipe an entry the user just refilled for next week. The
 // clear is fire-and-forget relative to the rest of the response: a
 // failure is only logged, same non-fatal treatment as the shopping
