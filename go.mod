@@ -3,14 +3,15 @@ module github.com/pianista215/my-assistant
 go 1.25.0
 
 require (
+	cloud.google.com/go/auth v0.20.0
 	github.com/joho/godotenv v1.5.1
+	github.com/skip2/go-qrcode v0.0.0-20200617195104-da1b6568686e
 	golang.org/x/image v0.44.0
 	golang.org/x/oauth2 v0.36.0
 	google.golang.org/api v0.289.0
 )
 
 require (
-	cloud.google.com/go/auth v0.20.0 // indirect
 	cloud.google.com/go/auth/oauth2adapt v0.2.8 // indirect
 	cloud.google.com/go/compute/metadata v0.9.0 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect

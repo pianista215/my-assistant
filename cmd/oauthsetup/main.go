@@ -22,12 +22,9 @@ package main
 import (
 	"context"
 	"crypto/rand"
-	_ "embed"
 	"encoding/hex"
-	"encoding/json"
 	"flag"
 	"fmt"
-	"html/template"
 	"log"
 	"net"
 	"net/http"
@@ -42,18 +39,10 @@ import (
 	googlecalendar "google.golang.org/api/calendar/v3"
 	"google.golang.org/api/drive/v3"
 	"google.golang.org/api/option"
+
+	"github.com/pianista215/my-assistant/internal/oauthpicker"
+	"github.com/pianista215/my-assistant/internal/oauthrenewal"
 )
-
-//go:embed picker.html
-var pickerHTML string
-
-var pickerTmpl = template.Must(template.New("picker.html").Parse(pickerHTML))
-
-// pickedFile is the spreadsheet the user selected in the Picker widget.
-type pickedFile struct {
-	ID   string
-	Name string
-}
 
 func main() {
 	_ = godotenv.Load()
@@ -100,7 +89,7 @@ func main() {
 	tokenCh := make(chan *oauth2.Token, 1)
 	pickerTokenCh := make(chan *oauth2.Token, 1)
 	errCh := make(chan error, 1)
-	fileCh := make(chan pickedFile, 1)
+	fileCh := make(chan oauthpicker.PickedFile, 1)
 
 	// Each route is registered on its own specific path (not "/"), so an
 	// unrelated request the browser sends automatically — e.g. a
@@ -108,8 +97,15 @@ func main() {
 	// of being routed to callbackHandler as a bogus, state-less retry.
 	mux := http.NewServeMux()
 	mux.Handle("/callback", callbackHandler(cfg, state, tokenCh, pickerTokenCh, errCh))
-	mux.Handle("/picker", pickerHandler(apiKey, appID, pickerTokenCh, origin))
-	mux.Handle("/picker-callback", pickerCallbackHandler(fileCh, errCh))
+	// /picker itself can't be registered until an access token exists,
+	// but mux routes are wired up-front — so this closure blocks on
+	// pickerTokenCh (filled by callbackHandler once sign-in completes)
+	// before delegating to the shared oauthpicker.Handler.
+	mux.Handle("/picker", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		token := <-pickerTokenCh
+		oauthpicker.Handler(apiKey, appID, token.AccessToken, origin).ServeHTTP(w, r)
+	}))
+	mux.Handle("/picker-callback", oauthpicker.CallbackHandler(fileCh, errCh))
 
 	server := &http.Server{Handler: mux}
 	go server.Serve(listener)
@@ -129,34 +125,15 @@ func main() {
 
 	fmt.Println("Signed in — pick the reference spreadsheet in the browser tab that just opened.")
 
-	var file pickedFile
+	var file oauthpicker.PickedFile
 	select {
 	case file = <-fileCh:
 	case err := <-errCh:
 		log.Fatalf("picker: %v", err)
 	}
 
-	creds := struct {
-		ClientID     string `json:"client_id"`
-		ClientSecret string `json:"client_secret"`
-		RefreshToken string `json:"refresh_token"`
-		Type         string `json:"type"`
-	}{
-		ClientID:     cfg.ClientID,
-		ClientSecret: cfg.ClientSecret,
-		RefreshToken: token.RefreshToken,
-		Type:         "authorized_user",
-	}
-
-	f, err := os.OpenFile(*out, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0600)
-	if err != nil {
+	if err := oauthrenewal.SaveCredentials(*out, cfg.ClientID, cfg.ClientSecret, token); err != nil {
 		log.Fatalf("writing %s: %v", *out, err)
-	}
-	defer f.Close()
-	enc := json.NewEncoder(f)
-	enc.SetIndent("", "  ")
-	if err := enc.Encode(creds); err != nil {
-		log.Fatalf("encoding credentials: %v", err)
 	}
 
 	fmt.Printf("Wrote %s — point GOOGLE_CREDENTIALS_FILE at this path.\n", *out)
@@ -219,51 +196,6 @@ func callbackHandler(cfg *oauth2.Config, state string, tokenCh, pickerTokenCh ch
 		tokenCh <- token
 		pickerTokenCh <- token
 		http.Redirect(w, r, "/picker", http.StatusFound)
-	})
-}
-
-// pickerHandler serves the Google Picker widget, restricted to spreadsheets,
-// authorized with the access token obtained by callbackHandler.
-func pickerHandler(apiKey, appID string, pickerTokenCh <-chan *oauth2.Token, origin string) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		token := <-pickerTokenCh
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		err := pickerTmpl.Execute(w, struct {
-			APIKey      string
-			AppID       string
-			AccessToken string
-			Origin      string
-		}{
-			APIKey:      apiKey,
-			AppID:       appID,
-			AccessToken: token.AccessToken,
-			Origin:      origin,
-		})
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-		}
-	})
-}
-
-// pickerCallbackHandler receives the file the user picked (or a
-// cancellation) from picker.html's client-side callback.
-func pickerCallbackHandler(fileCh chan<- pickedFile, errCh chan<- error) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var body struct {
-			ID        string `json:"id"`
-			Name      string `json:"name"`
-			Cancelled bool   `json:"cancelled"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			errCh <- fmt.Errorf("decoding picker callback: %w", err)
-			return
-		}
-		if body.Cancelled {
-			errCh <- fmt.Errorf("spreadsheet selection was cancelled")
-			return
-		}
-		fileCh <- pickedFile{ID: body.ID, Name: body.Name}
 	})
 }
 

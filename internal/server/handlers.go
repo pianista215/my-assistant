@@ -9,8 +9,11 @@ import (
 	"strings"
 	"time"
 
+	"golang.org/x/oauth2"
+
 	"github.com/pianista215/my-assistant/internal/calendar"
 	"github.com/pianista215/my-assistant/internal/display"
+	"github.com/pianista215/my-assistant/internal/oauthrenewal"
 	"github.com/pianista215/my-assistant/internal/weather"
 	"github.com/pianista215/my-assistant/internal/weeklymenu"
 )
@@ -104,9 +107,11 @@ func (s *Server) handleDisplay(w http.ResponseWriter, r *http.Request) {
 	}
 	footer := fmt.Sprintf("%s - %d%%", now.Format("15:04:05"), battery)
 
+	clients := s.clients.Load()
+
 	phase := phaseFor(now)
 	if phase == phaseNight {
-		s.clearOutgoingMenuOnce(r.Context(), now)
+		s.clearOutgoingMenuOnce(r.Context(), now, clients.menu)
 	}
 
 	header := spanishHeaderDate(now)
@@ -116,27 +121,53 @@ func (s *Server) handleDisplay(w http.ResponseWriter, r *http.Request) {
 		header = tomorrowHeaderDate(referenceDay)
 	}
 
-	var rows []calendar.Row
-	if phase == phaseNight {
-		rows, err = s.calendar.FetchForDay(r.Context(), referenceDay)
-	} else {
-		rows, err = s.calendar.FetchToday(r.Context())
+	fetchCalendar := func(c *googleClients) ([]calendar.Row, error) {
+		if phase == phaseNight {
+			return c.calendar.FetchForDay(r.Context(), referenceDay)
+		}
+		return c.calendar.FetchToday(r.Context())
 	}
 
+	rows, fetchErr := fetchCalendar(clients)
+
 	var img *display.GrayImage
-	if err != nil {
-		log.Printf("server: fetching calendar: %v", err)
+	switch {
+	case fetchErr != nil && s.rebuildClients != nil && oauthrenewal.IsReauthError(fetchErr):
+		// The shared credential has expired — try to advance any
+		// in-flight renewal (or start one) instead of just reporting the
+		// error. If handleReauth completes a renewal during this very
+		// request, retry the fetch immediately against the freshly
+		// rebuilt clients, so this same ESP32 poll can already come back
+		// with normal content instead of waiting for the next one.
+		var renewed bool
+		img, renewed = s.handleReauth(r.Context(), footer)
+		if renewed {
+			clients = s.clients.Load()
+			rows, fetchErr = fetchCalendar(clients)
+			img = nil
+		}
+		if img == nil && fetchErr != nil {
+			log.Printf("server: fetching calendar after renewal: %v", fetchErr)
+			img = display.NewTextRows("No se pudo cargar el calendario", footer, []string{
+				now.Format("2006-01-02 15:04:05"),
+				fetchErr.Error(),
+			})
+		}
+	case fetchErr != nil:
+		log.Printf("server: fetching calendar: %v", fetchErr)
 		img = display.NewTextRows("No se pudo cargar el calendario", footer, []string{
 			now.Format("2006-01-02 15:04:05"),
-			err.Error(),
+			fetchErr.Error(),
 		})
-	} else {
+	}
+
+	if img == nil {
 		var days []weeklymenu.Day
 		var menuErr error
 		if phase == phaseNight {
-			days, menuErr = s.menu.FetchWeekFrom(r.Context(), referenceDay)
+			days, menuErr = clients.menu.FetchWeekFrom(r.Context(), referenceDay)
 		} else {
-			days, menuErr = s.menu.FetchWeek(r.Context())
+			days, menuErr = clients.menu.FetchWeek(r.Context())
 		}
 		if menuErr != nil {
 			log.Printf("server: fetching weekly menu: %v", menuErr)
@@ -149,7 +180,7 @@ func (s *Server) handleDisplay(w http.ResponseWriter, r *http.Request) {
 		var items []string
 		var listErr error
 		if phase == phaseMidday {
-			items, listErr = s.shoppingList.FetchItems(r.Context())
+			items, listErr = clients.shoppingList.FetchItems(r.Context())
 			switch {
 			case listErr != nil:
 				log.Printf("server: fetching shopping list: %v", listErr)
@@ -187,7 +218,7 @@ func (s *Server) handleDisplay(w http.ResponseWriter, r *http.Request) {
 // clear is fire-and-forget relative to the rest of the response: a
 // failure is only logged, same non-fatal treatment as the shopping
 // list/weekly menu/weather fetches below.
-func (s *Server) clearOutgoingMenuOnce(ctx context.Context, now time.Time) {
+func (s *Server) clearOutgoingMenuOnce(ctx context.Context, now time.Time, menu MenuFetcher) {
 	key := now.Format("2006-01-02")
 	s.menuClearMu.Lock()
 	alreadyCleared := s.menuClearedDate == key
@@ -198,9 +229,89 @@ func (s *Server) clearOutgoingMenuOnce(ctx context.Context, now time.Time) {
 	if alreadyCleared {
 		return
 	}
-	if err := s.menu.ClearDay(ctx, now.Weekday()); err != nil {
+	if err := menu.ClearDay(ctx, now.Weekday()); err != nil {
 		log.Printf("server: clearing outgoing day's menu: %v", err)
 	}
+}
+
+// handleReauth advances the shared Google credential's renewal by one
+// step: poll any in-flight device authorization once, start a new one if
+// there isn't one (or the previous one expired unused, ~30 minutes), and
+// return either the QR takeover screen to render (renewed=false) or a
+// signal that the credential was just renewed and the caller should retry
+// its fetch against the freshly rebuilt clients (renewed=true, img=nil).
+// Only ever called when s.rebuildClients is non-nil (see handleDisplay).
+func (s *Server) handleReauth(ctx context.Context, footer string) (img *display.GrayImage, renewed bool) {
+	s.reauthMu.Lock()
+	pending := s.reauthPending
+	s.reauthMu.Unlock()
+
+	if pending != nil && !pending.Expired() {
+		token, done, pollErr := pending.Poll(ctx)
+		switch {
+		case pollErr != nil && done:
+			log.Printf("server: device authorization failed, requesting a new code: %v", pollErr)
+			pending = nil
+		case pollErr != nil:
+			log.Printf("server: polling device authorization: %v", pollErr)
+		case done:
+			if err := s.completeReauth(ctx, pending, token); err != nil {
+				log.Printf("server: completing oauth renewal: %v", err)
+				pending = nil
+			} else {
+				s.reauthMu.Lock()
+				s.reauthPending = nil
+				s.reauthMu.Unlock()
+				return nil, true
+			}
+		}
+	} else {
+		pending = nil
+	}
+
+	if pending == nil {
+		started, err := s.startDeviceAuth(ctx, s.cfg.GoogleCredentialsFile)
+		if err != nil {
+			log.Printf("server: starting device authorization: %v", err)
+			return display.NewTextRows("No se pudo cargar el calendario", footer, []string{
+				"La credencial de Google ha caducado y no se ha podido iniciar la renovación.",
+				err.Error(),
+			}), false
+		}
+		pending = started
+	}
+
+	s.reauthMu.Lock()
+	s.reauthPending = pending
+	s.reauthMu.Unlock()
+
+	lines := []string{
+		"El acceso a Google ha caducado.",
+		"Escanea el código con el móvil para renovarlo.",
+	}
+	userCode := ""
+	if pending.NeedsUserCode {
+		userCode = pending.UserCode
+	}
+	return display.NewReauthScreen("Reautorización necesaria", footer, lines, pending.VerificationURL, userCode), false
+}
+
+// completeReauth persists the token pending's device authorization just
+// obtained (via SaveCredentials, overwriting GOOGLE_CREDENTIALS_FILE) and
+// reconstructs calendar/shoppinglist/weeklymenu against that rewritten
+// file, swapping them into s.clients atomically — see googleClients' doc
+// comment for why the swap (not just the file write) is necessary for the
+// already-running process to actually start using the renewed credential.
+func (s *Server) completeReauth(ctx context.Context, pending *oauthrenewal.PendingAuth, token *oauth2.Token) error {
+	if err := oauthrenewal.SaveCredentials(s.cfg.GoogleCredentialsFile, pending.ClientID, pending.ClientSecret, token); err != nil {
+		return err
+	}
+	cal, shoppingList, menu, err := s.rebuildClients(ctx, s.cfg.GoogleCredentialsFile)
+	if err != nil {
+		return fmt.Errorf("rebuilding google clients: %w", err)
+	}
+	s.clients.Store(&googleClients{calendar: cal, shoppingList: shoppingList, menu: menu})
+	return nil
 }
 
 // buildWeatherImage fetches the forecast and renders the weather panel

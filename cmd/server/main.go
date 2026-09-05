@@ -4,6 +4,7 @@ package main
 import (
 	"context"
 	"flag"
+	"fmt"
 	"log"
 	"net/http"
 
@@ -24,19 +25,30 @@ func main() {
 		log.Fatalf("config: %v", err)
 	}
 
-	calClient, err := calendar.NewClient(context.Background(), cfg.GoogleCredentialsFile, cfg.CalendarID, cfg.Location)
-	if err != nil {
-		log.Fatalf("calendar: %v", err)
+	// buildGoogleClients is used both for the initial construction below
+	// and, later, by internal/server to rebuild calendar/shoppinglist/
+	// weeklymenu against a renewed credentials file once the QR-code
+	// reauthorization flow (internal/oauthrenewal) completes — see
+	// server.SetGoogleClientsBuilder.
+	buildGoogleClients := func(ctx context.Context, credentialsFile string) (server.CalendarFetcher, server.ShoppingListFetcher, server.MenuFetcher, error) {
+		cal, err := calendar.NewClient(ctx, credentialsFile, cfg.CalendarID, cfg.Location)
+		if err != nil {
+			return nil, nil, nil, fmt.Errorf("calendar: %w", err)
+		}
+		shoppingList, err := shoppinglist.NewClient(ctx, credentialsFile, cfg.GoogleSheetID)
+		if err != nil {
+			return nil, nil, nil, fmt.Errorf("shoppinglist: %w", err)
+		}
+		menu, err := weeklymenu.NewClient(ctx, credentialsFile, cfg.GoogleSheetID, cfg.Location)
+		if err != nil {
+			return nil, nil, nil, fmt.Errorf("weeklymenu: %w", err)
+		}
+		return cal, shoppingList, menu, nil
 	}
 
-	shoppingListClient, err := shoppinglist.NewClient(context.Background(), cfg.GoogleCredentialsFile, cfg.GoogleSheetID)
+	calClient, shoppingListClient, menuClient, err := buildGoogleClients(context.Background(), cfg.GoogleCredentialsFile)
 	if err != nil {
-		log.Fatalf("shoppinglist: %v", err)
-	}
-
-	menuClient, err := weeklymenu.NewClient(context.Background(), cfg.GoogleCredentialsFile, cfg.GoogleSheetID, cfg.Location)
-	if err != nil {
-		log.Fatalf("weeklymenu: %v", err)
+		log.Fatalf("building google clients: %v", err)
 	}
 
 	weatherClient := weather.NewClient(cfg.WeatherLatitude, cfg.WeatherLongitude, cfg.Location)
@@ -52,6 +64,7 @@ func main() {
 	}
 
 	srv := server.New(cfg, calClient, shoppingListClient, menuClient, weatherClient, tlsInfo)
+	srv.SetGoogleClientsBuilder(buildGoogleClients)
 
 	addr := ":" + cfg.Port
 	if *insecure {
