@@ -41,7 +41,7 @@ In production (VPS) `.env` isn't used: real environment variables are set on the
 The service reads one fixed reference calendar. The original plan was a service account key, but personal (org-less) Google Cloud projects have "Secure by Default" policies that block service account key creation with no self-serve override — see [`iam.disableServiceAccountKeyCreation`](https://cloud.google.com/resource-manager/docs/organization-policy/org-policy-constraints). Instead, this uses a **one-time OAuth authorization of your own Google account**, whose resulting credentials file is then used unattended (no repeated login, no browser needed at runtime):
 
 1. In [Google Cloud Console](https://console.cloud.google.com/), create (or reuse) a project and enable the **Google Calendar API**.
-2. **APIs & Services → OAuth consent screen**: user type "External" (the only option without a Workspace organization), add the `.../auth/calendar.readonly` scope, and set publishing status to **"In production"** (not "Testing" — Testing-mode refresh tokens expire after 7 days; Production ones don't, even for an unverified app with a single user). You'll see an "unverified app" warning when authorizing below — that's expected for a personal, single-user app; click through "Advanced → Go to (app name)".
+2. **APIs & Services → OAuth consent screen**: user type "External" (the only option without a Workspace organization), add the `.../auth/calendar.readonly` scope. Leave publishing status as **"Testing"** — in principle "In production" avoids the 7-day refresh-token expiry described below even for an unverified app, but in practice the Console now refuses to publish an app requesting sensitive scopes (calendar.readonly, drive.file) without a privacy policy URL and a verified domain, which isn't realistic for a personal, no-domain project. This project accepts the 7-day expiry instead and automates renewing it — see [OAuth token renewal (7-day expiry)](#oauth-token-renewal-7-day-expiry) below. You'll see an "unverified app" warning when authorizing below regardless — that's expected for a personal, single-user Testing app; click through "Advanced → Go to (app name)".
 3. **APIs & Services → Credentials → Create credentials → OAuth client ID**, application type **"Desktop app"**. Download the resulting JSON.
 4. Save that file as `secrets/oauth-client.json` in the repo root (the `secrets/` directory is gitignored — never commit it).
 5. Run the one-time setup tool: `go run ./cmd/oauthsetup`. It opens a browser to Google's consent screen, catches the redirect on a local loopback listener, writes `secrets/credentials.json` (an `authorized_user`-format credentials file), and then prints every calendar the authorized account can see, with its ID — pick the one you want as your reference calendar from that list. Run this once per Google account; the server itself never needs a browser or interactive login, at any point, including on the VPS.
@@ -73,6 +73,22 @@ The **second tab** of that same spreadsheet holds the weekly menu, with a fixed 
 Blank cells and rows are skipped silently, so a day doesn't need all 5 lunch/dinner rows filled in.
 
 See [`examples/example-spreadsheet.xlsx`](examples/example-spreadsheet.xlsx) for a filled-in example of both tabs.
+
+## OAuth token renewal (7-day expiry)
+
+While the OAuth consent screen stays in "Testing" (see [Google Calendar setup](#google-calendar-setup) above), every refresh token Google issues expires exactly 7 days after it's obtained — a hard limit tied to the consent screen's publishing status, not to which OAuth flow was used to get the token. Publishing to "In production" would remove that limit, but the Cloud Console now requires a privacy policy URL and a verified domain to publish an app requesting sensitive scopes (calendar.readonly, drive.file), which isn't realistic for a personal project with no domain. Rather than fight that, the server renews its own credential automatically, without ever needing a PC:
+
+- **When the credential expires**, `/api/v1/display`'s calendar fetch starts failing with `invalid_grant`. Instead of the generic "No se pudo cargar el calendario" error screen, the panel shows a QR code (and, if Google doesn't embed the code in the URL, a short code to type in by hand) pointing at Google's device-authorization page.
+- **Scan it with your phone**, sign in, and approve — no PC, no SSH, no redeploy. The next time the ESP32 polls (or, if you're quick, the very request already in flight), the server writes the renewed credential to `GOOGLE_CREDENTIALS_FILE` and rebuilds its Calendar/Sheets clients in place, with no restart.
+- This uses a **separate OAuth client**, of Google Cloud Console's "TVs and Limited Input devices" type — the [Device Authorization Grant](https://developers.google.com/identity/protocols/oauth2/limited-input-device) (RFC 8628). Google's device-code endpoint rejects the Desktop-type client `cmd/oauthsetup` uses, so this can't reuse it. Set the new client up **once**, right after finishing [Google Calendar setup](#google-calendar-setup) and [Google Sheets setup](#google-sheets-setup) above:
+
+  1. In the same Cloud Console project, **APIs & Services → Credentials → Create credentials → OAuth client ID**, application type **"TVs and Limited Input devices"**. Note its Client ID and Client Secret (no JSON download for this type).
+  2. Run `go run ./cmd/deviceauthsetup --client-id <id> --client-secret <secret>` (see [Device authorization setup tool](#device-authorization-setup-tool-cmddeviceauthsetup) below). It prints a URL and code — open it and approve, the same flow as signing a Smart TV app into a streaming service. This **replaces** `secrets/credentials.json` with a token issued to this new client.
+  3. The tool then checks whether this new client can already read your shopping-list spreadsheet. `drive.file` access is granted per (file, OAuth client) pair, not per Google account, so a brand-new client usually can't yet — if it can't, the tool automatically reopens the same Picker widget `cmd/oauthsetup` uses so you can re-select the spreadsheet, granting this client its own access to it.
+
+  No env var changes needed for any of this: the server reads the device client's ID/secret straight back out of `secrets/credentials.json` whenever it needs to start a renewal — the same file `GOOGLE_CREDENTIALS_FILE` already points at.
+
+- This only covers the *routine* 7-day expiry. A refresh token can still die for other reasons no amount of automation avoids — you revoke access, it goes unused for 6 months, the Google account's password changes, or a future iteration adds a new scope (which needs `cmd/oauthsetup`/`cmd/deviceauthsetup` re-run **once** each, to re-consent). In every one of those cases the same QR screen appears on the panel and the same phone-scan flow renews it.
 
 ## Running the server
 
@@ -183,6 +199,15 @@ go run ./cmd/oauthsetup
 # --client-json and --out override the default secrets/ paths
 ```
 
+## Device authorization setup tool (`cmd/deviceauthsetup`)
+
+One-time bootstrap for the OAuth client behind [OAuth token renewal](#oauth-token-renewal-7-day-expiry) above — a "TVs and Limited Input devices" client, since Google's device-code endpoint rejects `cmd/oauthsetup`'s Desktop-type client. Unlike `cmd/oauthsetup`, there's no local redirect listener: the device flow has no `redirect_uri` at all. It prints a URL/code to approve (opened in this machine's own browser as a convenience — on the real server this same step becomes a QR code on the e-ink panel), blocks until you approve it, replaces `secrets/credentials.json` with the new client's own token, and checks whether that client can already read your shopping-list spreadsheet — re-launching the Picker widget to re-grant access if not. Run once, right after creating the OAuth client (see [OAuth token renewal](#oauth-token-renewal-7-day-expiry)):
+
+```bash
+go run ./cmd/deviceauthsetup --client-id <id> --client-secret <secret>
+# --credentials-file, --sheet-id and --picker-api-key override the .env-derived defaults
+```
+
 ## Diagnostic tool (`cmd/calendarcheck`)
 
 Dumps today's raw events from the configured reference calendar as JSON, straight from the Google Calendar API (bypassing the app's own event model). Useful to check how a given calendar item actually looks — e.g. whether a "reminder" really comes through with an identical start/end, or to debug why an event isn't showing up as expected.
@@ -284,16 +309,20 @@ examples/
 cmd/
   server/        # HTTP(S) server entrypoint; HTTPS by default (generates/reuses a self-signed cert, cmd/server/tls.go), --insecure for plain HTTP
   preview/       # terminal/PNG buffer visualization CLI
-  oauthsetup/    # one-time tool: OAuth desktop client JSON -> long-lived credentials file
-  calendarcheck/ # dumps today's raw Calendar API events as JSON, for debugging
-  sheetscheck/   # dumps the raw shopping-list sheet values as JSON, for debugging
-  menucheck/     # dumps the raw weekly-menu sheet values as JSON, for debugging
-  weathercheck/  # dumps the raw Open-Meteo forecast response as JSON, for debugging
+  oauthsetup/      # one-time tool: OAuth desktop client JSON -> long-lived credentials file
+  deviceauthsetup/ # one-time tool: bootstraps the device-flow OAuth client used for automatic renewal (see "OAuth token renewal" above)
+  calendarcheck/   # dumps today's raw Calendar API events as JSON, for debugging
+  sheetscheck/     # dumps the raw shopping-list sheet values as JSON, for debugging
+  menucheck/       # dumps the raw weekly-menu sheet values as JSON, for debugging
+  weathercheck/    # dumps the raw Open-Meteo forecast response as JSON, for debugging
 internal/
   config/       # configuration loading (token, port, Google credentials, calendar/sheet IDs, timezone) from environment/.env
   calendar/     # Google Calendar client + today's agenda as a list of Row
   shoppinglist/ # Google Sheets client + the current shopping list as a list of items
   weeklymenu/   # Google Sheets client + the week's planned menu as a rotated list of Day
+  weather/      # Open-Meteo client + hourly forecast summarization
+  oauthpicker/  # shared Google Picker widget page, used by cmd/oauthsetup and cmd/deviceauthsetup
+  oauthrenewal/ # Device Authorization Grant client, used by internal/server to renew an expired credential unattended
   display/      # image generation + custom binary format codec
   server/       # router, auth middleware, and HTTP handlers
 ```

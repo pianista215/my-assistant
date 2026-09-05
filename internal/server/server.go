@@ -6,10 +6,12 @@ import (
 	"context"
 	"net/http"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/pianista215/my-assistant/internal/calendar"
 	"github.com/pianista215/my-assistant/internal/config"
+	"github.com/pianista215/my-assistant/internal/oauthrenewal"
 	"github.com/pianista215/my-assistant/internal/weather"
 	"github.com/pianista215/my-assistant/internal/weeklymenu"
 )
@@ -70,14 +72,61 @@ type TLSInfo struct {
 	CertPEM string
 }
 
-type Server struct {
-	cfg          *config.Config
+// googleClients groups the three Google-credential-backed fetchers so
+// they can be swapped in atomically after a successful oauthrenewal (see
+// handleReauth/completeReauth in handlers.go). weather is excluded: it
+// talks to Open-Meteo, which needs no credential at all, so it's never
+// affected by a renewal.
+//
+// This indirection exists because option.WithCredentialsFile (used by
+// internal/calendar/internal/shoppinglist/internal/weeklymenu's
+// NewClient) reads the credentials file exactly once, at client
+// construction time — overwriting the file on disk after a renewal does
+// nothing for a *Client already built against the old (now-invalid)
+// in-memory refresh token. The only way for the already-running process
+// to actually start using a renewed credential is to construct brand new
+// clients against the rewritten file and swap them in, which is what
+// completeReauth does.
+type googleClients struct {
 	calendar     CalendarFetcher
 	shoppingList ShoppingListFetcher
 	menu         MenuFetcher
-	weather      WeatherFetcher
-	tls          TLSInfo
-	mux          *http.ServeMux
+}
+
+// GoogleClientsBuilder constructs the three Google-credential-backed
+// fetchers from a credentials file — the same shape of call
+// cmd/server/main.go already makes once at startup to build the fetchers
+// passed into New. Server never imports internal/calendar/shoppinglist/
+// weeklymenu directly (same as it never did before this feature — see
+// the Fetcher interfaces above), so it asks the caller for this function
+// instead of constructing clients itself.
+type GoogleClientsBuilder func(ctx context.Context, credentialsFile string) (CalendarFetcher, ShoppingListFetcher, MenuFetcher, error)
+
+type Server struct {
+	cfg     *config.Config
+	weather WeatherFetcher
+	tls     TLSInfo
+	mux     *http.ServeMux
+
+	clients atomic.Pointer[googleClients]
+
+	// rebuildClients is set via SetGoogleClientsBuilder, normally right
+	// after New — kept as a post-construction setter rather than a New
+	// parameter so every test/caller that doesn't care about renewal
+	// (the overwhelming majority) is unaffected. A nil rebuildClients
+	// (the default) simply means handleDisplay never attempts a renewal
+	// on an expired credential — it falls back to the same plain error
+	// screen as any other calendar-fetch failure.
+	rebuildClients GoogleClientsBuilder
+
+	// startDeviceAuth begins a new device authorization request — set to
+	// oauthrenewal.StartDeviceAuth by New, and only ever overridden by
+	// this package's own tests (to point handleReauth's cold-start path
+	// at a fake Google instead of the real network, the same reason
+	// oauthrenewal.StartDeviceAuthWithEndpoint exists). Not something
+	// cmd/server ever needs to configure, unlike rebuildClients, so it
+	// has no public setter.
+	startDeviceAuth func(ctx context.Context, credentialsFile string) (*oauthrenewal.PendingAuth, error)
 
 	// menuClearMu guards menuClearedDate, the date (in cfg.Location) the
 	// outgoing day's menu was last cleared, so the night phase's ~3
@@ -85,12 +134,32 @@ type Server struct {
 	// repeatedly wiping an entry the user just refilled for next week.
 	menuClearMu     sync.Mutex
 	menuClearedDate string
+
+	// reauthMu guards reauthPending, the in-flight device authorization
+	// request (if any) started the last time handleDisplay saw an
+	// expired-credential error — see handleReauth. Kept across requests
+	// (rather than started fresh on every request) so the same QR code
+	// stays valid and pollable across the ESP32's hourly polls, instead
+	// of abandoning a code the user might already be part-way through
+	// scanning.
+	reauthMu      sync.Mutex
+	reauthPending *oauthrenewal.PendingAuth
 }
 
 func New(cfg *config.Config, calendarFetcher CalendarFetcher, shoppingListFetcher ShoppingListFetcher, menuFetcher MenuFetcher, weatherFetcher WeatherFetcher, tlsInfo TLSInfo) *Server {
-	s := &Server{cfg: cfg, calendar: calendarFetcher, shoppingList: shoppingListFetcher, menu: menuFetcher, weather: weatherFetcher, tls: tlsInfo, mux: http.NewServeMux()}
+	s := &Server{cfg: cfg, weather: weatherFetcher, tls: tlsInfo, mux: http.NewServeMux(), startDeviceAuth: oauthrenewal.StartDeviceAuth}
+	s.clients.Store(&googleClients{calendar: calendarFetcher, shoppingList: shoppingListFetcher, menu: menuFetcher})
 	s.routes()
 	return s
+}
+
+// SetGoogleClientsBuilder installs the function handleDisplay uses to
+// reconstruct calendar/shoppinglist/weeklymenu clients after a successful
+// oauthrenewal. cmd/server/main.go calls this once, right after New, with
+// a closure that mirrors the same three NewClient calls it already makes
+// to build the fetchers passed into New itself.
+func (s *Server) SetGoogleClientsBuilder(build GoogleClientsBuilder) {
+	s.rebuildClients = build
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
