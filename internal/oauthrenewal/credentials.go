@@ -32,16 +32,9 @@ type storedCredentials struct {
 // device flow requires — so no separate client_id/client_secret
 // configuration is needed for renewal, only for that initial bootstrap.
 func ClientCredentials(path string) (clientID, clientSecret string, err error) {
-	data, err := os.ReadFile(path)
+	creds, err := loadStoredCredentials(path)
 	if err != nil {
-		return "", "", fmt.Errorf("oauthrenewal: reading %s: %w", path, err)
-	}
-	var creds storedCredentials
-	if err := json.Unmarshal(data, &creds); err != nil {
-		return "", "", fmt.Errorf("oauthrenewal: parsing %s: %w", path, err)
-	}
-	if creds.ClientID == "" || creds.ClientSecret == "" {
-		return "", "", fmt.Errorf("oauthrenewal: %s has no client_id/client_secret", path)
+		return "", "", err
 	}
 	return creds.ClientID, creds.ClientSecret, nil
 }
@@ -84,12 +77,12 @@ func SaveCredentials(path, clientID, clientSecret string, token *oauth2.Token) e
 //     "..."`. Its `code` field mirroring that isn't exported, so
 //     tokenErrorCode below decodes the same raw JSON body (exported as
 //     Error.Body) the library itself already parsed to get it.
-//   - The same failure caught by the older golang.org/x/oauth2 path
-//     instead (*oauth2.RetrieveError, `oauth2: "invalid_grant" "..."`) —
-//     kept as a defensive fallback in case a different code path (or a
-//     future dependency version) ever takes this route instead; not
-//     observed in this app's own testing, since calendar/shoppinglist/
-//     weeklymenu all go through the newer library above.
+//   - The same failure caught by the golang.org/x/oauth2 path instead
+//     (*oauth2.RetrieveError, `oauth2: "invalid_grant" "..."`) — now the
+//     primary path, since calendar/shoppinglist/weeklymenu authenticate
+//     through ClientOption, whose refreshTokenProvider refreshes via
+//     golang.org/x/oauth2 (the *googleauth.Error check above remains for
+//     any client still built with option.WithCredentialsFile).
 //   - A plain 401 from the Calendar/Sheets API itself (*googleapi.Error)
 //     — happens when the cached access token *hasn't* expired yet by its
 //     own clock, so the transport sends it straight to the API without

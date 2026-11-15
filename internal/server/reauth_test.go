@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"golang.org/x/oauth2"
+	"google.golang.org/api/googleapi"
 
 	"github.com/pianista215/my-assistant/internal/calendar"
 	"github.com/pianista215/my-assistant/internal/config"
@@ -94,6 +95,22 @@ func newReauthTestServer(t *testing.T, fake *fakeDeviceAuthServer) (srv *Server,
 	rebuildCount = &calls
 	srv.SetGoogleClientsBuilder(func(ctx context.Context, credentialsFile string) (CalendarFetcher, ShoppingListFetcher, MenuFetcher, error) {
 		atomic.AddInt32(&calls, 1)
+		// Mirror reality: clients built from a file whose refresh token
+		// is still the dead one keep failing with invalid_grant; only
+		// once SaveCredentials has rewritten it do they work again.
+		data, err := os.ReadFile(credentialsFile)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		var stored struct {
+			RefreshToken string `json:"refresh_token"`
+		}
+		if err := json.Unmarshal(data, &stored); err != nil {
+			return nil, nil, nil, err
+		}
+		if stored.RefreshToken == "dead" {
+			return fakeCalendarFetcher{err: invalidGrantErr}, fakeShoppingListFetcher{}, fakeMenuFetcher{}, nil
+		}
 		return fakeCalendarFetcher{rows: []calendar.Row{{Summary: "Renewed", Start: time.Now(), End: time.Now()}}}, fakeShoppingListFetcher{}, fakeMenuFetcher{}, nil
 	})
 
@@ -144,8 +161,8 @@ func TestHandleDisplayInvalidGrantShowsReauthScreenWhenPending(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
 	}
-	if atomic.LoadInt32(rebuildCount) != 0 {
-		t.Fatalf("rebuildCount = %d, want 0 (nothing should have been approved yet)", *rebuildCount)
+	if atomic.LoadInt32(rebuildCount) != 1 {
+		t.Fatalf("rebuildCount = %d, want 1 (only the verification retry; nothing approved yet)", *rebuildCount)
 	}
 
 	srv.reauthMu.Lock()
@@ -186,8 +203,8 @@ func TestHandleDisplayInvalidGrantCompletesRenewalAndRetries(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
 	}
-	if atomic.LoadInt32(rebuildCount) != 1 {
-		t.Fatalf("rebuildCount = %d, want exactly 1", *rebuildCount)
+	if atomic.LoadInt32(rebuildCount) != 2 {
+		t.Fatalf("rebuildCount = %d, want exactly 2 (verification retry + post-renewal rebuild)", *rebuildCount)
 	}
 
 	srv.reauthMu.Lock()
@@ -267,5 +284,78 @@ func TestCompleteReauthPropagatesRebuildError(t *testing.T) {
 	token := &oauth2.Token{RefreshToken: "renewed-refresh-token"}
 	if err := srv.completeReauth(context.Background(), pending, token); err == nil {
 		t.Fatal("completeReauth returned nil error when rebuildClients failed")
+	}
+}
+
+// transient401Err is the shape a stale-but-not-yet-expired access token
+// produces at the Calendar API itself (see oauthrenewal.IsReauthError) —
+// matched as a possible dead credential, but here the refresh token is
+// actually fine and a rebuilt client recovers.
+var transient401Err = fmt.Errorf("calendar: listing events: %w", &googleapi.Error{Code: http.StatusUnauthorized, Message: "Request had invalid authentication credentials."})
+
+// newTransientFailureServer builds a Server whose initial calendar
+// fetcher fails with a 401, but whose GoogleClientsBuilder returns a
+// working one — i.e. the credential was never really dead. startDeviceAuth
+// fails the test if invoked: no QR flow should ever start.
+func newTransientFailureServer(t *testing.T) (srv *Server, rebuildCount *int32) {
+	t.Helper()
+	cfg := &config.Config{AuthToken: "correct-token", Port: "0", Location: time.UTC, GoogleCredentialsFile: filepath.Join(t.TempDir(), "credentials.json")}
+	srv = New(cfg, fakeCalendarFetcher{err: transient401Err}, fakeShoppingListFetcher{}, fakeMenuFetcher{}, fakeWeatherFetcher{points: []weather.HourPoint{{Time: time.Now(), TempC: 20, Code: 0}}}, TLSInfo{})
+
+	var calls int32
+	srv.SetGoogleClientsBuilder(func(ctx context.Context, credentialsFile string) (CalendarFetcher, ShoppingListFetcher, MenuFetcher, error) {
+		atomic.AddInt32(&calls, 1)
+		return fakeCalendarFetcher{rows: []calendar.Row{{Summary: "Recovered", Start: time.Now(), End: time.Now()}}}, fakeShoppingListFetcher{}, fakeMenuFetcher{}, nil
+	})
+	srv.startDeviceAuth = func(ctx context.Context, credentialsFile string) (*oauthrenewal.PendingAuth, error) {
+		t.Error("startDeviceAuth called for a transient failure that should have recovered on retry")
+		return nil, errors.New("unexpected")
+	}
+	return srv, &calls
+}
+
+func serveDisplay(t *testing.T, srv *Server) {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/display?battery=87", nil)
+	req.Header.Set("Authorization", "Bearer correct-token")
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+}
+
+func TestHandleDisplayTransient401RecoversWithoutReauthScreen(t *testing.T) {
+	srv, rebuildCount := newTransientFailureServer(t)
+	serveDisplay(t, srv)
+
+	if got := atomic.LoadInt32(rebuildCount); got != 1 {
+		t.Fatalf("rebuildCount = %d, want 1 (the verification retry)", got)
+	}
+	srv.reauthMu.Lock()
+	pending := srv.reauthPending
+	srv.reauthMu.Unlock()
+	if pending != nil {
+		t.Fatalf("srv.reauthPending = %+v, want nil after a transient failure", pending)
+	}
+	rows, err := srv.clients.Load().calendar.FetchToday(context.Background())
+	if err != nil || len(rows) != 1 || rows[0].Summary != "Recovered" {
+		t.Fatalf("clients not swapped to the verified ones: rows=%v err=%v", rows, err)
+	}
+}
+
+func TestHandleDisplayTransientRecoveryDiscardsStalePending(t *testing.T) {
+	srv, _ := newTransientFailureServer(t)
+	srv.reauthMu.Lock()
+	srv.reauthPending = &oauthrenewal.PendingAuth{UserCode: "OLD-CODE"}
+	srv.reauthMu.Unlock()
+
+	serveDisplay(t, srv)
+
+	srv.reauthMu.Lock()
+	pending := srv.reauthPending
+	srv.reauthMu.Unlock()
+	if pending != nil {
+		t.Fatalf("srv.reauthPending = %+v, want nil once the credential recovered", pending)
 	}
 }
