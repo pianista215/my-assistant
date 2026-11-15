@@ -133,12 +133,37 @@ func (s *Server) handleDisplay(w http.ResponseWriter, r *http.Request) {
 	var img *display.GrayImage
 	switch {
 	case fetchErr != nil && s.rebuildClients != nil && oauthrenewal.IsReauthError(fetchErr):
-		// The shared credential has expired — try to advance any
-		// in-flight renewal (or start one) instead of just reporting the
-		// error. If handleReauth completes a renewal during this very
-		// request, retry the fetch immediately against the freshly
-		// rebuilt clients, so this same ESP32 poll can already come back
-		// with normal content instead of waiting for the next one.
+		// Looks like a dead credential — but a single failure isn't
+		// proof: the ESP32 polls hourly, which is also the access
+		// token's lifetime, so requests routinely land right at its
+		// expiry, where cloud.google.com/go/auth's non-blocking cache
+		// still hands out the "stale" (seconds-to-live) token while
+		// refreshing in the background, and the API can reject it with
+		// a 401. Verify with freshly built clients (a real refresh
+		// against the token endpoint) before showing the QR screen.
+		log.Printf("server: calendar fetch looks like a dead credential, verifying with fresh clients: %v", fetchErr)
+		var verified *googleClients
+		verified, rows, fetchErr = s.verifyCredential(r.Context(), fetchErr, fetchCalendar)
+		if verified != nil {
+			clients = verified
+			break
+		}
+		if !oauthrenewal.IsReauthError(fetchErr) {
+			log.Printf("server: fetching calendar with fresh clients: %v", fetchErr)
+			img = display.NewTextRows("No se pudo cargar el calendario", footer, []string{
+				now.Format("2006-01-02 15:04:05"),
+				fetchErr.Error(),
+			})
+			break
+		}
+
+		// Confirmed dead — try to advance any in-flight renewal (or
+		// start one) instead of just reporting the error. If
+		// handleReauth completes a renewal during this very request,
+		// retry the fetch immediately against the freshly rebuilt
+		// clients, so this same ESP32 poll can already come back with
+		// normal content instead of waiting for the next one.
+		log.Printf("server: credential confirmed dead after retry: %v", fetchErr)
 		var renewed bool
 		img, renewed = s.handleReauth(r.Context(), footer)
 		if renewed {
@@ -234,13 +259,49 @@ func (s *Server) clearOutgoingMenuOnce(ctx context.Context, now time.Time, menu 
 	}
 }
 
+// verifyCredential double-checks an IsReauthError-shaped calendar
+// failure before handleDisplay commits to the QR renewal screen: it
+// rebuilds the Google clients from GOOGLE_CREDENTIALS_FILE (fresh token
+// caches, so the retry forces a real refresh-token exchange) and retries
+// fetchCalendar once. On success the rebuilt clients are swapped into
+// s.clients and returned (any pending device authorization left over from
+// an earlier false alarm is discarded, so a future real failure starts
+// with a fresh code); otherwise verified is nil and err is the retry's
+// error (or origErr, if the clients couldn't even be rebuilt). Only called
+// when s.rebuildClients is non-nil.
+func (s *Server) verifyCredential(ctx context.Context, origErr error, fetchCalendar func(*googleClients) ([]calendar.Row, error)) (verified *googleClients, rows []calendar.Row, err error) {
+	cal, shoppingList, menu, err := s.rebuildClients(ctx, s.cfg.GoogleCredentialsFile)
+	if err != nil {
+		log.Printf("server: rebuilding google clients to verify credential: %v", err)
+		return nil, nil, origErr
+	}
+	fresh := &googleClients{calendar: cal, shoppingList: shoppingList, menu: menu}
+	rows, err = fetchCalendar(fresh)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	s.clients.Store(fresh)
+	s.reauthMu.Lock()
+	if s.reauthPending != nil {
+		log.Printf("server: credential recovered on retry, discarding pending device authorization")
+		s.reauthPending = nil
+	} else {
+		log.Printf("server: credential recovered on retry, no reauthorization needed")
+	}
+	s.reauthMu.Unlock()
+	return fresh, rows, nil
+}
+
 // handleReauth advances the shared Google credential's renewal by one
 // step: poll any in-flight device authorization once, start a new one if
 // there isn't one (or the previous one expired unused, ~30 minutes), and
 // return either the QR takeover screen to render (renewed=false) or a
 // signal that the credential was just renewed and the caller should retry
 // its fetch against the freshly rebuilt clients (renewed=true, img=nil).
-// Only ever called when s.rebuildClients is non-nil (see handleDisplay).
+// Only ever called when s.rebuildClients is non-nil, and only after
+// verifyCredential's retry with fresh clients failed too (see
+// handleDisplay) — never on a single, possibly transient, failure.
 func (s *Server) handleReauth(ctx context.Context, footer string) (img *display.GrayImage, renewed bool) {
 	s.reauthMu.Lock()
 	pending := s.reauthPending

@@ -8,8 +8,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/pianista215/my-assistant/internal/oauthrenewal"
 	"google.golang.org/api/calendar/v3"
-	"google.golang.org/api/option"
 )
 
 // Client fetches today's agenda from one fixed reference calendar.
@@ -23,10 +23,13 @@ type Client struct {
 // is stored at credentialsFile, reading calendarID and formatting/bounding
 // "today" in loc.
 func NewClient(ctx context.Context, credentialsFile, calendarID string, loc *time.Location) (*Client, error) {
-	svc, err := calendar.NewService(ctx,
-		option.WithCredentialsFile(credentialsFile),
-		option.WithScopes(calendar.CalendarReadonlyScope),
-	)
+	// oauthrenewal.ClientOption, not option.WithCredentialsFile: see its
+	// doc comment for the hourly-poll/async-refresh race it avoids.
+	authOpt, err := oauthrenewal.ClientOption(credentialsFile)
+	if err != nil {
+		return nil, fmt.Errorf("calendar: loading credentials: %w", err)
+	}
+	svc, err := calendar.NewService(ctx, authOpt)
 	if err != nil {
 		return nil, fmt.Errorf("calendar: creating client: %w", err)
 	}

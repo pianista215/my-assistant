@@ -7,8 +7,7 @@ import (
 	"context"
 	"fmt"
 
-	"google.golang.org/api/drive/v3"
-	"google.golang.org/api/option"
+	"github.com/pianista215/my-assistant/internal/oauthrenewal"
 	"google.golang.org/api/sheets/v4"
 )
 
@@ -25,16 +24,19 @@ type Client struct {
 }
 
 // NewClient builds a Client authenticated with the credentials stored at
-// credentialsFile (same authorized_user file used by internal/calendar;
-// option.WithCredentialsFile auto-detects the format), reading products
+// credentialsFile (same authorized_user file used by internal/calendar,
+// loaded through oauthrenewal.ClientOption), reading products
 // from spreadsheetID. The credentials are scoped to drive.file — per-file
 // access to whichever spreadsheet was picked during cmd/oauthsetup, not
 // account-wide — so spreadsheetID must be that same file.
 func NewClient(ctx context.Context, credentialsFile, spreadsheetID string) (*Client, error) {
-	svc, err := sheets.NewService(ctx,
-		option.WithCredentialsFile(credentialsFile),
-		option.WithScopes(drive.DriveFileScope),
-	)
+	// oauthrenewal.ClientOption, not option.WithCredentialsFile: see its
+	// doc comment for the hourly-poll/async-refresh race it avoids.
+	authOpt, err := oauthrenewal.ClientOption(credentialsFile)
+	if err != nil {
+		return nil, fmt.Errorf("shoppinglist: loading credentials: %w", err)
+	}
+	svc, err := sheets.NewService(ctx, authOpt)
 	if err != nil {
 		return nil, fmt.Errorf("shoppinglist: creating client: %w", err)
 	}
